@@ -2532,10 +2532,22 @@ app = create_app()
 
 def main() -> None:
     """Entrypoint binding strictly to 127.0.0.1:8790 (never 0.0.0.0)."""
+    import urllib.request
     import uvicorn
 
     host = "127.0.0.1"
     port = int(os.environ.get("ZEROG_PORT", "8790"))
+    try:
+        with urllib.request.urlopen(f"http://{host}:{port}/api/health", timeout=0.8) as resp:
+            if resp.status == 200:
+                print(
+                    f"0G Bridge Daemon is already running at http://{host}:{port} "
+                    f"(Aux Pane: http://{host}:{port}/?view=auxpane) — no second server needed!"
+                )
+                return
+    except Exception:
+        pass
+
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 

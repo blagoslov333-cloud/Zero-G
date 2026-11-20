@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import glob
 import logging
 import os
 import re
 import shutil
 import subprocess
 import time
+from pathlib import Path
 from typing import Any
 
 from server.contracts import TunnelBackend
@@ -23,6 +25,46 @@ _HTTPS_URL_RE = re.compile(r"https://[A-Za-z0-9._-]+(?::\d+)?(?:/[^\s\"']*)?")
 
 WINGET_CLOUDFLARED = "winget install Cloudflare.cloudflared"
 WINGET_TAILSCALE = "winget install Tailscale.Tailscale"
+
+
+def _resolve_binary(name: str, extra_candidates: list[str]) -> str | None:
+    """Resolve an executable from PATH or common Windows install locations."""
+    found = shutil.which(name)
+    if found:
+        return found
+    for pattern in extra_candidates:
+        if "*" in pattern:
+            matches = sorted(glob.glob(pattern, recursive=True))
+            for m in matches:
+                if os.path.isfile(m):
+                    return m
+        elif os.path.isfile(pattern):
+            return pattern
+    return None
+
+
+def _resolve_cloudflared() -> str | None:
+    local_app = os.environ.get("LOCALAPPDATA", "")
+    prog_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+    prog_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+    candidates = [
+        str(Path.home() / ".0g" / "bin" / "cloudflared.exe"),
+        os.path.join(prog_files_x86, "cloudflared", "cloudflared.exe"),
+        os.path.join(prog_files, "cloudflared", "cloudflared.exe"),
+        os.path.join(local_app, "Microsoft", "WinGet", "Links", "cloudflared.exe"),
+        os.path.join(local_app, "Microsoft", "WinGet", "Packages", "Cloudflare.cloudflared*", "**", "cloudflared.exe"),
+    ]
+    return _resolve_binary("cloudflared", candidates)
+
+
+def _resolve_tailscale() -> str | None:
+    local_app = os.environ.get("LOCALAPPDATA", "")
+    prog_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+    candidates = [
+        os.path.join(prog_files, "Tailscale", "tailscale.exe"),
+        os.path.join(local_app, "Microsoft", "WinGet", "Links", "tailscale.exe"),
+    ]
+    return _resolve_binary("tailscale", candidates)
 
 
 # ---------------------------------------------------------------------------
@@ -463,8 +505,8 @@ class TunnelSupervisor:
 
     @staticmethod
     def binary_status() -> dict[str, Any]:
-        cf_path = shutil.which("cloudflared")
-        ts_path = shutil.which("tailscale")
+        cf_path = _resolve_cloudflared()
+        ts_path = _resolve_tailscale()
         return {
             "cloudflare": {
                 "available": bool(cf_path),
@@ -558,7 +600,7 @@ class TunnelSupervisor:
         self._proc = None
 
         if self.backend == "tailscale":
-            ts_exe = shutil.which("tailscale")
+            ts_exe = _resolve_tailscale()
             if ts_exe:
                 try:
                     await asyncio.to_thread(
@@ -577,7 +619,7 @@ class TunnelSupervisor:
         self._notify_governor(False)
 
     async def _start_cloudflare(self, token: str | None, wait_url_sec: float) -> dict[str, Any]:
-        cf_exe = shutil.which("cloudflared")
+        cf_exe = _resolve_cloudflared()
         if not cf_exe:
             self.status = "missing_binary"
             self.public_url = None
@@ -665,7 +707,7 @@ class TunnelSupervisor:
             logger.debug("cloudflared stream watcher error: %s", exc)
 
     async def _start_tailscale(self) -> dict[str, Any]:
-        ts_exe = shutil.which("tailscale")
+        ts_exe = _resolve_tailscale()
         if not ts_exe:
             self.status = "missing_binary"
             self.public_url = None
