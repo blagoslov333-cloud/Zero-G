@@ -5,6 +5,7 @@ import {
   Lock,
   Palette,
   ShieldAlert,
+  ShieldCheck,
   Unlock,
   Zap,
 } from "lucide-react";
@@ -33,6 +34,8 @@ export const TopHeader: React.FC = () => {
     wsStatus,
     lastSeq,
     hostGlance,
+    agentGateMode,
+    setAgentGateMode,
     panicLock,
     unlockHost,
     setActiveTab,
@@ -123,52 +126,87 @@ export const TopHeader: React.FC = () => {
           </div>
         </div>
 
-        {/* Battery + Power Gear + Theme + PANIC */}
+        {/* Agent Gate + Laptop Battery/Power + Theme + PANIC */}
         <div className="flex items-center gap-1.5 shrink-0">
           {!isAuxPane && (
-            <button
-              type="button"
-              onClick={() => setActiveTab("host")}
-              className="btn-secondary !min-h-[44px] !px-2.5 text-xs tabular-nums"
-              title="Open Backpack Power Governor"
-              aria-label={`Battery ${battery ?? "--"} percent, Power gear ${GEAR_LABEL[gear]}`}
-            >
-              {acPlugged ? (
-                <BatteryCharging
-                  className="w-4 h-4 shrink-0"
-                  style={{ color: "var(--status-success)" }}
-                />
-              ) : (
-                <Battery
-                  className="w-4 h-4 shrink-0"
-                  style={{
-                    color:
-                      typeof battery === "number" && battery <= 20
-                        ? "var(--status-warning)"
-                        : "var(--text-primary)",
-                  }}
-                />
-              )}
-              <span className="font-mono font-semibold">
-                {typeof battery === "number" ? `${battery}%` : "--"}
-              </span>
-              <span
-                className="hidden sm:inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
-                style={{
-                  backgroundColor:
-                    gear === "auto_turbo" || gear === "max_turbo"
-                      ? "var(--status-info-bg)"
-                      : "var(--status-success-bg)",
-                  color:
-                    gear === "auto_turbo" || gear === "max_turbo"
-                      ? "var(--status-info-fg)"
-                      : "var(--status-success-fg)",
-                }}
+            <>
+              <button
+                type="button"
+                onClick={() =>
+                  void setAgentGateMode(
+                    agentGateMode === "agent_turbo"
+                      ? "ask_on_phone"
+                      : "agent_turbo"
+                  )
+                }
+                className="btn-secondary !min-h-[44px] !px-2.5 text-xs"
+                title="Toggle Agent Approval Mode (separate from laptop battery)"
+                aria-label={`Agent gate mode: ${
+                  agentGateMode === "agent_turbo" ? "Agent Turbo" : "Ask on Phone"
+                }`}
               >
-                <Zap className="w-3 h-3" />
-                {GEAR_LABEL[gear]}
-              </span>
-            </button>
+                {agentGateMode === "agent_turbo" ? (
+                  <Zap
+                    className="w-4 h-4 shrink-0"
+                    style={{ color: "var(--accent-secondary)" }}
+                  />
+                ) : (
+                  <ShieldCheck
+                    className="w-4 h-4 shrink-0"
+                    style={{ color: "var(--accent-primary)" }}
+                  />
+                )}
+                <span className="hidden md:inline font-semibold">
+                  {agentGateMode === "agent_turbo"
+                    ? "Agent Turbo"
+                    : "Ask Phone"}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab("host")}
+                className="btn-secondary !min-h-[44px] !px-2.5 text-xs tabular-nums"
+                title="Open Laptop Hardware Power Settings"
+                aria-label={`Laptop battery ${battery ?? "--"} percent, hardware gear ${GEAR_LABEL[gear]}`}
+              >
+                {acPlugged ? (
+                  <BatteryCharging
+                    className="w-4 h-4 shrink-0"
+                    style={{ color: "var(--status-success)" }}
+                  />
+                ) : (
+                  <Battery
+                    className="w-4 h-4 shrink-0"
+                    style={{
+                      color:
+                        typeof battery === "number" && battery <= 20
+                          ? "var(--status-warning)"
+                          : "var(--text-primary)",
+                    }}
+                  />
+                )}
+                <span className="font-mono font-semibold">
+                  {typeof battery === "number" ? `${battery}%` : "--"}
+                </span>
+                <span
+                  className="hidden sm:inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                  style={{
+                    backgroundColor:
+                      gear === "auto_turbo" || gear === "max_turbo"
+                        ? "var(--status-info-bg)"
+                        : "var(--status-success-bg)",
+                    color:
+                      gear === "auto_turbo" || gear === "max_turbo"
+                        ? "var(--status-info-fg)"
+                        : "var(--status-success-fg)",
+                  }}
+                >
+                  <Zap className="w-3 h-3" />
+                  {GEAR_LABEL[gear]}
+                </span>
+              </button>
+            </>
           )}
 
           <button

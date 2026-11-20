@@ -10,6 +10,7 @@ import React, {
 import type {
   ActiveMobilePrompt,
   ActiveTab,
+  AgentGateMode,
   ApprovalDecisionRequest,
   ApprovalItem,
   ArtifactItem,
@@ -133,6 +134,8 @@ export interface ZeroGStoreValue {
   runMacro: (id: string) => Promise<void>;
 
   hostGlance: HostGlanceSnapshot | null;
+  agentGateMode: AgentGateMode;
+  setAgentGateMode: (mode: AgentGateMode) => Promise<void>;
   updatePowerGear: (req: PowerGearUpdateRequest) => Promise<void>;
   panicLock: (lockWorkstation?: boolean) => Promise<void>;
   unlockHost: () => Promise<void>;
@@ -522,6 +525,15 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
           );
           break;
         }
+        case "agent_gate.updated": {
+          const nextMode = p.agentGateMode as AgentGateMode | undefined;
+          if (nextMode === "ask_on_phone" || nextMode === "agent_turbo") {
+            setHostGlance((prev) =>
+              prev ? { ...prev, agentGateMode: nextMode } : prev
+            );
+          }
+          break;
+        }
         case "rule.updated":
         case "rule_updated": {
           void api.getRules().then(setRules).catch(() => {});
@@ -790,7 +802,15 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const updatePowerGear = useCallback(async (req: PowerGearUpdateRequest) => {
     const next = await api.updatePowerGear(req);
-    setHostGlance(next);
+    setHostGlance((prev) => (prev ? { ...prev, ...next } : next));
+  }, []);
+
+  const setAgentGateMode = useCallback(async (mode: AgentGateMode) => {
+    const res = await api.updateAgentGate(mode);
+    const applied = res.agentGateMode || mode;
+    setHostGlance((prev) =>
+      prev ? { ...prev, agentGateMode: applied } : prev
+    );
   }, []);
 
   const panicLock = useCallback(async (lockWorkstation = false) => {
@@ -834,6 +854,7 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const value = useMemo<ZeroGStoreValue>(
     () => ({
+      agentGateMode: hostGlance?.agentGateMode || "ask_on_phone",
       theme,
       setTheme,
       isAuxPane,
@@ -876,6 +897,7 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       macros,
       runMacro,
       hostGlance,
+      setAgentGateMode,
       updatePowerGear,
       panicLock,
       unlockHost,
@@ -938,6 +960,7 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       macros,
       runMacro,
       hostGlance,
+      setAgentGateMode,
       updatePowerGear,
       panicLock,
       unlockHost,

@@ -35,6 +35,8 @@ export const AuxPaneView: React.FC = () => {
     generatePairingCode,
     approvals,
     mobileTools,
+    agentGateMode,
+    setAgentGateMode,
     updatePowerGear,
     panicLock,
     unlockHost,
@@ -262,7 +264,12 @@ export const AuxPaneView: React.FC = () => {
             <button
               key={g.id}
               type="button"
-              onClick={() => void updatePowerGear({ gear: g.id })}
+              onClick={() =>
+                void updatePowerGear({
+                  gear: g.id,
+                  autoGovernorEnabled: g.id === "auto_turbo",
+                })
+              }
               className={
                 hostGlance?.powerGear === g.id ? "btn-primary !px-2 text-xs" : "btn-secondary !px-2 text-xs"
               }
@@ -271,6 +278,23 @@ export const AuxPaneView: React.FC = () => {
               {g.label}
             </button>
           ))}
+        </div>
+
+        <div className="grid grid-cols-2 gap-1.5 pt-1 border-t" style={{ borderColor: "var(--border-default)" }}>
+          <button
+            type="button"
+            onClick={() => void setAgentGateMode("ask_on_phone")}
+            className={agentGateMode === "ask_on_phone" ? "btn-primary !px-2 text-xs" : "btn-secondary !px-2 text-xs"}
+          >
+            Ask on Phone
+          </button>
+          <button
+            type="button"
+            onClick={() => void setAgentGateMode("agent_turbo")}
+            className={agentGateMode === "agent_turbo" ? "btn-primary !px-2 text-xs" : "btn-secondary !px-2 text-xs"}
+          >
+            Agent Turbo
+          </button>
         </div>
 
         <button

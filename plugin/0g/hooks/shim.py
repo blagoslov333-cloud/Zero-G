@@ -258,8 +258,8 @@ def main():
         else:
             _emit(0, {})
 
-    # Connected to live daemon -> switch socket read timeout to 28s for PreToolUse hold (1.8s otherwise)
-    read_timeout = 28.0 if is_pre_tool else 1.8
+    # Connected to live daemon -> switch socket read timeout to 105s for 90s phone notification hold
+    read_timeout = 105.0 if is_pre_tool else 1.8
     try:
         if conn.sock is not None:
             conn.sock.settimeout(read_timeout)

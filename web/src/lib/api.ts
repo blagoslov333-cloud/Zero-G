@@ -1,4 +1,5 @@
 import type {
+  AgentGateMode,
   ApprovalDecisionRequest,
   ApprovalItem,
   ArtifactItem,
@@ -304,6 +305,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify(req),
     }),
+
+  updateAgentGate: (mode: AgentGateMode) =>
+    request<{ ok: boolean; agentGateMode: AgentGateMode }>(
+      "/api/host/agent-gate",
+      {
+        method: "POST",
+        body: JSON.stringify({ mode }),
+      }
+    ),
 
   getAutomations: async (): Promise<AutomationItem[]> => {
     const data = await request<

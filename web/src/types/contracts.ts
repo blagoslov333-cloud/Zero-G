@@ -17,6 +17,7 @@ export type PowerGear =
   | "balanced"
   | "max_turbo"
   | "low_battery_guard";
+export type AgentGateMode = "ask_on_phone" | "agent_turbo";
 export type RiskTier = 0 | 1 | 2 | 3;
 export type ApprovalStatus =
   | "pending"
@@ -211,6 +212,7 @@ export interface HostGlanceSnapshot {
   activeAgents: Array<Record<string, unknown>>;
   powerGear: PowerGear;
   autoGovernorEnabled: boolean;
+  agentGateMode?: AgentGateMode;
   keepAwakeActive: boolean;
   displayOffRequested: boolean;
   lowBatteryThreshold: number;

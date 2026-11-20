@@ -10,6 +10,7 @@ ProviderId = Literal["antigravity", "claude_code", "codex_cli", "grok_build"]
 SessionSource = Literal["desktop_hook", "phone_worker"]
 SessionStatus = Literal["running", "waiting_approval", "idle", "completed", "cancelled", "error"]
 PowerGear = Literal["ultra_sip", "auto_turbo", "balanced", "max_turbo", "low_battery_guard"]
+AgentGateMode = Literal["ask_on_phone", "agent_turbo"]
 RiskTier = Literal[0, 1, 2, 3]
 ApprovalStatus = Literal["pending", "approved", "edited_approved", "denied", "escalated", "auto_allowed", "auto_denied"]
 MobileToolRuntime = Literal["phone_js", "phone_builtin", "host_command"]
@@ -212,6 +213,7 @@ class HostGlanceSnapshot(BaseModel):
     activeAgents: list[dict[str, Any]] = Field(default_factory=list)
     powerGear: PowerGear = "ultra_sip"
     autoGovernorEnabled: bool = True
+    agentGateMode: AgentGateMode = "ask_on_phone"
     keepAwakeActive: bool = False
     displayOffRequested: bool = False
     lowBatteryThreshold: int = 15
@@ -225,6 +227,10 @@ class PowerGearUpdateRequest(BaseModel):
     displayOff: bool | None = None
     lowBatteryThreshold: int | None = None
     autoHibernateAtThreshold: bool | None = None
+
+
+class AgentGateUpdateRequest(BaseModel):
+    mode: AgentGateMode
 
 
 class AutomationItem(BaseModel):

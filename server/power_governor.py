@@ -219,13 +219,19 @@ class BackpackPowerGovernor:
                 state_changed = True
 
             if req.gear is not None:
-                if req.gear in ("balanced", "max_turbo", "low_battery_guard"):
+                if req.gear == "auto_turbo" and req.autoGovernorEnabled is not False:
+                    # Selecting Auto-Turbo enables automatic scaling unless explicitly disabled
+                    self.manual_gear = None
+                    self.auto_governor_enabled = True
+                elif req.autoGovernorEnabled is True:
+                    self.manual_gear = None
+                    self.auto_governor_enabled = True
+                else:
+                    # Any explicit manual gear click (including Ultra-Sip, Balanced, Max Turbo,
+                    # Low-Batt Guard) locks that gear and disables Auto-Governor so agent runs
+                    # never flip it back behind the user's back.
                     self.manual_gear = req.gear
                     self.auto_governor_enabled = False
-                elif req.gear in ("ultra_sip", "auto_turbo") and req.autoGovernorEnabled is False:
-                    self.manual_gear = req.gear
-                else:
-                    self.manual_gear = None
                 if self.current_gear != req.gear:
                     self._transition_gear(req.gear)
                 state_changed = True

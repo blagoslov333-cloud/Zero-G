@@ -319,6 +319,54 @@ def test_hook_dispatch_lifecycle_approvals_and_panic(tmp_path: Path) -> None:
         assert r_unlock.status_code == 200
         assert r_unlock.json()["hostLocked"] is False
 
+        # Ask on Phone with no connected phone & no hold override defers cleanly without blocking
+        r_no_phone = client.post(
+            "/api/hooks/dispatch",
+            headers=headers,
+            json={
+                "provider": "antigravity",
+                "hookEventName": "PreToolUse",
+                "conversationId": "conv-e2e-1",
+                "toolCall": {"id": "tc-nophone", "name": "run_command", "arguments": {"CommandLine": "npm run custom-check"}},
+            },
+        )
+        assert r_no_phone.status_code == 200
+        assert r_no_phone.json()["decision"] == "ask"
+
+        # Agent Turbo auto-allows Tier 0-2 while still blocking Tier 3
+        r_gate = client.post("/api/host/agent-gate", json={"mode": "agent_turbo"})
+        assert r_gate.status_code == 200
+        assert r_gate.json()["agentGateMode"] == "agent_turbo"
+
+        r_turbo_ok = client.post(
+            "/api/hooks/dispatch",
+            headers=headers,
+            json={
+                "provider": "antigravity",
+                "hookEventName": "PreToolUse",
+                "conversationId": "conv-e2e-1",
+                "toolCall": {"id": "tc-turbo-ok", "name": "run_command", "arguments": {"CommandLine": "npm run dev"}},
+            },
+        )
+        assert r_turbo_ok.status_code == 200
+        assert r_turbo_ok.json()["decision"] == "allow"
+
+        r_turbo_tier3 = client.post(
+            "/api/hooks/dispatch",
+            headers=headers,
+            json={
+                "provider": "antigravity",
+                "hookEventName": "PreToolUse",
+                "conversationId": "conv-e2e-1",
+                "toolCall": {"id": "tc-turbo-t3", "name": "write_file", "arguments": {"Path": ".env", "Content": "K=V"}},
+            },
+        )
+        assert r_turbo_tier3.status_code == 200
+        assert r_turbo_tier3.json()["decision"] == "deny"
+
+        # Reset back to ask_on_phone
+        assert client.post("/api/host/agent-gate", json={"mode": "ask_on_phone"}).status_code == 200
+
 
 # ---------------------------------------------------------------------------
 # 4. hooks/shim.py Cold-Start Latency & Multi-Provider Formats
@@ -647,11 +695,20 @@ def test_phone_authored_tool_to_mcp_stdio_and_ws_invoke(tmp_path: Path) -> None:
 
 
 def test_windows_host_modules_and_audit_chain(tmp_path: Path) -> None:
-    # BackpackPowerGovernor passive state & job tracking (no hibernate/lock/display-off)
+    # BackpackPowerGovernor passive state & sticky manual ultra_sip override
     gov = BackpackPowerGovernor(cooldown_sec=60.0)
     st0 = gov.get_state()
     assert st0["powerGear"] == "ultra_sip"
     assert st0["lowBatteryThreshold"] == 15
+
+    # Clicking Ultra-Sip manually must lock autoGovernorEnabled=False and stay ultra_sip when a job runs
+    st_locked = gov.apply_gear({"gear": "ultra_sip"})
+    assert st_locked["powerGear"] == "ultra_sip"
+    assert st_locked["autoGovernorEnabled"] is False
+    st_after_job = gov.notify_job_started("swarm-task-1")
+    assert st_after_job["powerGear"] == "ultra_sip"
+    assert st_after_job["autoGovernorEnabled"] is False
+    gov.notify_job_finished("swarm-task-1")
 
     # HostTelemetry zero-psutil snapshot
     tel = HostTelemetry(power_governor=gov)

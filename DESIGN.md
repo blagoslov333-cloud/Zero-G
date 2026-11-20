@@ -30,16 +30,20 @@ Consume via `tokens.dtcg.json` or `web/src/styles/theme.css` (`theme.css` root m
 | :--- | :--- | :--- | :--- |
 | **Canvas Background** | `--bg-canvas` / `--background` | `#09090B` | Primary viewport backdrop |
 | **Elevated Surface** | `--bg-surface` / `--surface` | `#121318` | Cards, bottom bar, drawers, Aux Pane |
-| **Subtle Surface** | `--bg-subtle` | `#0F1013` | Code blocks, terminal wells, nested rows |
+| **Subtle / Nested Well** | `--bg-subtle` | `#0F1013` | Code blocks, terminal wells, nested rows |
+| **Raised Surface** | `--bg-elevated` | `#181A22` | Active tabs, hover pills, modal sheets |
 | **Primary Text** | `--text-primary` / `--foreground` | `#F4F4F5` | `16.88:1` on surface · `18.10:1` on canvas |
-| **Muted / Secondary Text** | `--text-muted` / `--muted-foreground` | `#A1A1AA` | Metadata, captions, timestamps |
+| **Muted / Secondary Text** | `--text-muted` / `--muted-foreground` | `#A1A1AA` | Metadata, captions, secondary labels |
 | **Primary Action** | `--accent-primary` / `--primary` | `#10B981` | Primary CTA fill & active state |
 | **Primary Foreground** | `--accent-primary-fg` / `--primary-foreground` | `#041E16` | `6.88:1` against `--accent-primary` |
 | **Secondary Accent** | `--accent-secondary` / `--accent` | `#38BDF8` | Live sync pulse, data links, info badges |
-| **Border / Hairline** | `--border-default` / `--border` | `#27272A` | `1px` structural dividers & outlines |
-| **Status: Warning / Hold** | `--status-warning` | `#F59E0B` | `25s` hold countdown, battery guard |
-| **Status: Danger / PANIC** | `--status-danger` | `#EF4444` | `HOST_LOCKED`, Tier-3 block, PANIC switch |
-| **Status: Success** | `--status-success` | `#10B981` | Passed checks, clean worktree, synced |
+| **Border / Hairline** | `--border-default` / `--border` | `#27272A` | `1px` structural dividers & control outlines |
+| **Strong Border / Style** | `--border-strong`, `--border-style` | `#5A5A5D`, `solid` | Active focus frames (`dashed` in `wireframe`) |
+| **Status: Info** | `--status-info`, `-bg`, `-fg` | `#38BDF8` | Tier 1 workspace badge, info callouts |
+| **Status: Warning / Hold** | `--status-warning`, `-bg`, `-fg` | `#F59E0B` | Hold countdown, Tier 2, battery guard |
+| **Status: Danger / PANIC** | `--status-danger`, `-bg`, `-fg`, `-contrast` | `#EF4444` | `HOST_LOCKED`, Tier-3 block, PANIC switch |
+| **Status: Success** | `--status-success`, `-bg`, `-fg` | `#10B981` | Passed checks, clean worktree, synced |
+| **Git Diff Highlights** | `--diff-add-bg`/`-fg`, `--diff-del-bg`/`-fg` | `#34D399` / `#F87171` | File Change & Undo unified diff lines |
 
 ### Provider Badge Tokens (Slot for Custom Design Icons)
 | Provider ID | CSS Token | Default Color | Design Team Slot |
@@ -89,6 +93,14 @@ Consume via `tokens.dtcg.json` or `web/src/styles/theme.css` (`theme.css` root m
   3. **Pending Approvals & Mobile Tools Summary:** Active hold counter, registered phone tools count.
   4. **PANIC Host Lock Switch:** Instant hardware lock toggle (`HOST_LOCKED`).
 
+### C. Implemented Sub-Views, Drawers & Interactive Overlays (Design Scope)
+1. **Tab 1 — Projects & Unified Feed (`ProjectsFeedTab` + `FileChangeDrawer`):** Horizontal project cards (`Video production` + scratch workspaces), source filter (`All` / `Desktop` / `Phone`), live timeline with `Thoughts` & `Artifacts` toggles, offline-capable steering input with outbox status queue, and slide-over **File Change & Undo Drawer** (`git status`, unified diff viewer, revert file, worktree merge/discard).
+2. **Tab 2 — Inbox & Smart Rules (`InboxTab`):** **Agent Gate Mode** toggle (`Ask on Phone` vs `Agent Turbo` auto-approve Tier 0–2, independent of hardware power), pending approval queue with live `25s` hold bar, AST breakdown + `Tier 0–3` pills, **Approve**, **Edit & Approve (`overwrite` JSON drawer)**, **Allow 30m**, **Deny**, plus Smart Rules creator.
+3. **Tab 3 — Spawn Worker (`NewWorkerTab`):** Project selector, provider picker (`Antigravity` #1, `Claude Code`, `Codex CLI`, `Grok Build`), isolated `git worktree` toggle, token budget slider, and prompt launcher.
+4. **Tab 4 — Automations & Phone Tools (`ToolsTab`):** Scheduled cron automations, One-Tap Laptop Macros, and the **Mobile Tool Authoring Studio** (`phone_js` / `host_command` editor + **Test on Phone** runner + 6 built-in phone tools).
+5. **Tab 5 — Host Control (`HostTab`):** 5-gear **Backpack Power Governor** (`Ultra-Sip`, `Auto-Turbo`, `Balanced`, `Max Turbo`, `Low-Batt Guard`) + Display-Off + Low-Battery slider, CPU/RAM/GPU/Disk/Port vitals, interactive **Phone Terminal** + preset buttons (`git status`, `nvidia-smi`, `pytest`, `ports`), **Cloudflare / Tailscale Tunnel & QR Pairing**, WebAuthn Passkey & Web Push controls, and Multi-Provider Hook Snippets.
+6. **Global Overlays (`MobilePromptModal` + `PairingModal`):** Interactive phone modal triggered live when an agent calls `phone_ask_input` or `phone_capture_photo`, dismissible notification card stack (`phone_notify_card`), and 6-digit pairing dialog.
+
 ---
 
 ## 5. Mandatory Interactive State Matrix
@@ -102,11 +114,12 @@ Every screen and reusable component MUST handle all baseline + `0G` runtime stat
 | `loading` | Initial fetch or worker boot | Skeleton shimmer rows matching card geometry (zero layout shift / `CLS < 0.1`) |
 | `empty` | No sessions, pending approvals, or diffs | Clear empty-state card with 1-sentence guidance and direct primary action CTA |
 | `error` | API failure, daemon down, or rule block | High-contrast `--status-danger` inline alert with retry button or fallback explanation |
-| `25s-hold` | Mode A `PreToolUse` awaiting phone tap | Live `tabular-nums` countdown bar (`25s -> 0s`), AST risk tier pill (`Tier 0–3`), full unwrapped command block, **Approve**, **Edit & Approve**, **Allow 30m**, **Deny** |
-| `escalated` | `25s` hold expired -> `force_ask` returned | Card transitions cleanly to amber `"Escalated to Antigravity Native UI"` badge so user knows laptop state was preserved |
+| `phone-hold` | Mode A `PreToolUse` awaiting phone tap (`Ask on Phone` mode) | Live `tabular-nums` countdown bar (`25s -> 0s`), Web Push alert sent, AST risk tier pill (`Tier 0–3`), full unwrapped command block, **Approve**, **Edit & Approve**, **Allow 30m**, **Deny** |
+| `escalated` | Hold window expired -> `force_ask` returned | Card transitions cleanly to amber `"Escalated to Antigravity Native UI"` badge so user knows laptop state was preserved |
+| `agent-turbo` | `agentGateMode == "agent_turbo"` | Header/Inbox pill shows `"Agent Turbo (Auto)"`; Tier 0–2 workspace tools auto-allow while Tier-3 secrets/destructive commands stay blocked |
 | `offline-queued` | Phone offline / hotspot handoff | Prompt saved in IndexedDB outbox with `"Queued (Guarded by step # & HEAD sha)"` badge; auto-flushes on WS reconnect |
 | `HOST_LOCKED` | PANIC button triggered | Persistent red banner across header (`HOST LOCKED — Hooks Denying All Writes`), unlock requires explicit reset/passkey |
-| `ultra_sip` / `auto_turbo` | Backpack Power Governor gear change | Distinct gear indicator pill showing current power mode (`Eco/Display-Off` vs `Full Turbo Boost`) |
+| `ultra_sip` / `max_turbo` | Laptop Hardware Power gear (independent of Agent Gate!) | Distinct hardware power pill; selecting `Ultra-Sip` or `Max Turbo` locks manually (`Auto-Scale` off) and never flips when tasks start/finish |
 
 ---
 

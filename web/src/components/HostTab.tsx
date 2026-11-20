@@ -56,6 +56,8 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
 export const HostTab: React.FC = () => {
   const {
     hostGlance,
+    agentGateMode,
+    setAgentGateMode,
     updatePowerGear,
     ptySessions,
     activePtyId,
@@ -182,6 +184,44 @@ export const HostTab: React.FC = () => {
 
   return (
     <div className="space-y-5">
+      {/* 0. Agent Approval Gate (Independent of Hardware Power) */}
+      <section aria-label="Agent Gate Mode" className="surface-card p-3.5 space-y-2.5">
+        <div>
+          <h2 className="font-display text-sm font-bold">
+            Agent Gate Mode (Notifications vs Auto-Run)
+          </h2>
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+            Decides if agents push Allow/Deny prompts to your phone or run automatically. Separate from laptop battery gears below.
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => void setAgentGateMode("ask_on_phone")}
+            className={
+              agentGateMode === "ask_on_phone"
+                ? "btn-primary !flex-col !items-start !h-auto py-2.5 text-left"
+                : "btn-secondary !flex-col !items-start !h-auto py-2.5 text-left"
+            }
+          >
+            <span className="text-xs font-bold">Ask on Phone</span>
+            <span className="text-[11px] opacity-80">Push alerts to app</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => void setAgentGateMode("agent_turbo")}
+            className={
+              agentGateMode === "agent_turbo"
+                ? "btn-primary !flex-col !items-start !h-auto py-2.5 text-left"
+                : "btn-secondary !flex-col !items-start !h-auto py-2.5 text-left"
+            }
+          >
+            <span className="text-xs font-bold">Agent Turbo</span>
+            <span className="text-[11px] opacity-80">Auto-allow Tier 0–2</span>
+          </button>
+        </div>
+      </section>
+
       {/* 1. Interactive Backpack Power Governor */}
       <section aria-label="Backpack Power Governor" className="surface-card p-3.5 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -199,7 +239,7 @@ export const HostTab: React.FC = () => {
             )}
             <div>
               <h2 className="font-display text-sm font-bold">
-                Backpack Power Governor
+                Laptop Hardware Power (CPU &amp; Battery Only)
               </h2>
               <p className="text-xs tabular-nums" style={{ color: "var(--text-muted)" }}>
                 {hostGlance?.batteryPercent ?? "--"}% ·{" "}
@@ -207,6 +247,10 @@ export const HostTab: React.FC = () => {
                 {hostGlance?.batteryRemainingMin
                   ? ` · ~${hostGlance.batteryRemainingMin}m left`
                   : ""}
+                {" · "}
+                {hostGlance?.autoGovernorEnabled
+                  ? "Auto-Scale ON"
+                  : "Locked Manually"}
               </p>
             </div>
           </div>
@@ -214,13 +258,13 @@ export const HostTab: React.FC = () => {
           <label className="inline-flex items-center gap-2 text-xs cursor-pointer min-h-[44px]">
             <input
               type="checkbox"
-              checked={Boolean(hostGlance?.autoGovernorEnabled ?? true)}
+              checked={Boolean(hostGlance?.autoGovernorEnabled ?? false)}
               onChange={(e) =>
                 void updatePowerGear({ autoGovernorEnabled: e.target.checked })
               }
               className="h-4 w-4"
             />
-            <span className="font-semibold">Auto-Governor</span>
+            <span className="font-semibold">Auto-Scale</span>
           </label>
         </div>
 
@@ -231,7 +275,12 @@ export const HostTab: React.FC = () => {
               <button
                 key={g.id}
                 type="button"
-                onClick={() => void updatePowerGear({ gear: g.id })}
+                onClick={() =>
+                  void updatePowerGear({
+                    gear: g.id,
+                    autoGovernorEnabled: g.id === "auto_turbo",
+                  })
+                }
                 className={
                   active
                     ? "btn-primary !flex-col !items-start !h-auto py-2.5 text-left"

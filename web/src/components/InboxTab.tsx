@@ -62,6 +62,8 @@ export const InboxTab: React.FC = () => {
     rules,
     saveRule,
     deleteRule,
+    agentGateMode,
+    setAgentGateMode,
   } = useZeroG();
 
   const [nowSec, setNowSec] = useState<number>(() => Date.now() / 1000);
@@ -154,6 +156,51 @@ export const InboxTab: React.FC = () => {
 
   return (
     <div className="space-y-5">
+      {/* Agent Approval Mode (Independent from Laptop Hardware Power) */}
+      <section aria-label="Agent Gate Mode" className="surface-card p-3.5 space-y-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="font-display text-sm font-bold">
+              Agent Approval Gate
+            </h2>
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+              Controls whether agents ask your phone or auto-run workspace steps.
+              Laptop power (Ultra-Sip / Max Turbo) never overrides this.
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => void setAgentGateMode("ask_on_phone")}
+            className={
+              agentGateMode === "ask_on_phone"
+                ? "btn-primary !flex-col !items-start !h-auto py-2.5 text-left"
+                : "btn-secondary !flex-col !items-start !h-auto py-2.5 text-left"
+            }
+          >
+            <span className="text-xs font-bold">Ask on Phone</span>
+            <span className="text-[11px] opacity-80">
+              Push Allow / Deny to app
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => void setAgentGateMode("agent_turbo")}
+            className={
+              agentGateMode === "agent_turbo"
+                ? "btn-primary !flex-col !items-start !h-auto py-2.5 text-left"
+                : "btn-secondary !flex-col !items-start !h-auto py-2.5 text-left"
+            }
+          >
+            <span className="text-xs font-bold">Agent Turbo</span>
+            <span className="text-[11px] opacity-80">
+              Auto-allow Tier 0–2 · Block Tier 3
+            </span>
+          </button>
+        </div>
+      </section>
+
       {/* Pending 25s-Hold Approvals */}
       <section aria-label="Pending Tool Approvals" className="space-y-3">
         <div className="flex items-center justify-between">

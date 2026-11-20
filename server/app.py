@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 
 from server.auth import AuthManager
 from server.contracts import (
+    AgentGateUpdateRequest,
     ApprovalDecisionRequest,
     ApprovalItem,
     AutomationItem,
@@ -268,6 +269,8 @@ class ZeroGState:
             pass
 
         self.host_locked: bool = bool(self.db.get_kv("host_locked", False))
+        saved_gate = str(self.db.get_kv("agent_gate_mode", "ask_on_phone"))
+        self.agent_gate_mode: str = saved_gate if saved_gate in ("ask_on_phone", "agent_turbo") else "ask_on_phone"
         self.ws_clients: set[WebSocket] = set()
         self.pending_approval_events: dict[str, asyncio.Event] = {}
         self.pending_mobile_tool_calls: dict[str, asyncio.Future[dict[str, Any]]] = {}
@@ -583,6 +586,7 @@ def create_app(
                 [s for s in state.db.list_sessions() if s.status in ("running", "waiting_approval")]
             ),
             "mobileToolsCount": len(state.db.list_mobile_tools()),
+            "agentGateMode": state.agent_gate_mode,
             "power": state.get_power_state(),
             "tunnel": {
                 **state.get_tunnel_status(),
@@ -938,7 +942,14 @@ def create_app(
                 reason_str = "; ".join(eval_res["riskReasons"]) or "Blocked by 0G Tier-3 security rule"
                 return HookDecisionResponse(decision="deny", reason=reason_str).model_dump()
 
-            if auto_dec == "allow":
+            if auto_dec == "allow" or (
+                state.agent_gate_mode == "agent_turbo" and int(eval_res["riskTier"]) < 3
+            ):
+                resolved_by = (
+                    eval_res["ruleId"]
+                    if auto_dec == "allow" and eval_res["ruleId"]
+                    else "agent_turbo"
+                )
                 allowed_item = ApprovalItem(
                     id=f"appr-{uuid.uuid4().hex[:10]}",
                     sessionId=session_id,
@@ -955,7 +966,7 @@ def create_app(
                     createdAt=now,
                     expiresAt=now,
                     resolvedAt=now,
-                    resolvedBy=eval_res["ruleId"] or "rules_engine",
+                    resolvedBy=resolved_by,
                 )
                 state.db.upsert_approval(allowed_item)
                 state.db.upsert_session(session)
@@ -965,9 +976,14 @@ def create_app(
                     session_id=session_id,
                     provider=payload.provider,
                 )
+                reason_msg = (
+                    f"Auto-allowed by Agent Turbo (Tier {eval_res['riskTier']})"
+                    if resolved_by == "agent_turbo"
+                    else f"Auto-allowed by 0G rule ({resolved_by})"
+                )
                 return HookDecisionResponse(
                     decision="allow",
-                    reason=f"Auto-allowed by 0G rule ({eval_res['ruleId']})",
+                    reason=reason_msg,
                 ).model_dump()
 
             hold_override = (
@@ -975,6 +991,16 @@ def create_app(
                 or raw_body.get("holdSeconds")
                 or os.environ.get("ZEROG_HOLD_SECONDS")
             )
+            has_connected_phone = (
+                len(state.ws_clients) > 0
+                or len(state.db.list_push_subscriptions()) > 0
+            )
+            if hold_override is None and not has_connected_phone:
+                return HookDecisionResponse(
+                    decision="ask",
+                    reason="No phone connected to 0G; deferring to host policy",
+                ).model_dump()
+
             try:
                 hold_sec_float = float(hold_override) if hold_override is not None else 25.0
             except Exception:
@@ -1896,6 +1922,10 @@ def create_app(
                             continue
                         d["hostLocked"] = state.host_locked
                         d["powerGear"] = power.get("powerGear", d.get("powerGear", "ultra_sip"))
+                        d["autoGovernorEnabled"] = bool(
+                            power.get("autoGovernorEnabled", d.get("autoGovernorEnabled", True))
+                        )
+                        d["agentGateMode"] = state.agent_gate_mode
                         return HostGlanceSnapshot.model_validate(d).model_dump()
                     except Exception:
                         pass
@@ -1913,6 +1943,7 @@ def create_app(
             acPluggedIn=power.get("acPluggedIn", True),
             powerGear=power.get("powerGear", "ultra_sip"),
             autoGovernorEnabled=bool(power.get("autoGovernorEnabled", True)),
+            agentGateMode=state.agent_gate_mode,  # type: ignore[arg-type]
             keepAwakeActive=bool(power.get("keepAwakeActive", False)),
             displayOffRequested=bool(power.get("displayOffRequested", False)),
             lowBatteryThreshold=int(power.get("lowBatteryThreshold", 15)),
@@ -1920,6 +1951,15 @@ def create_app(
             ts=time.time(),
         )
         return snap.model_dump()
+
+    @app.post("/api/host/agent-gate")
+    async def api_host_agent_gate(req: AgentGateUpdateRequest) -> dict[str, Any]:
+        state.agent_gate_mode = req.mode
+        state.db.set_kv("agent_gate_mode", req.mode)
+        state.db.append_audit("mobile_user", "agent_gate_updated", {"mode": req.mode})
+        payload = {"agentGateMode": req.mode, "ts": time.time()}
+        state.db.emit_event("agent_gate.updated", payload)
+        return {"ok": True, **payload}
 
     @app.post("/api/host/power-gear")
     async def api_host_power_gear(req: PowerGearUpdateRequest) -> dict[str, Any]:
