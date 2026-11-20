@@ -1,0 +1,19 @@
+{
+  "name": "0G",
+  "short_name": "0G",
+  "description": "Zero-weight mobile remote & host control for Antigravity, Claude Code, Codex CLI, and Grok Build.",
+  "start_url": "/?tab=projects",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#09090B",
+  "theme_color": "#09090B",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

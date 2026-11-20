@@ -1,0 +1,400 @@
+/* ==========================================================================
+ * 0G Design System — Style #13 Obsidian Dark Bento Grid + Outdoor + Wireframe
+ * All visual tokens live here; TSX components reference CSS custom properties
+ * exclusively (no raw hex values inside TSX).
+ * ========================================================================== */
+
+:root,
+[data-theme="obsidian"] {
+  color-scheme: dark;
+
+  /* Semantic Surface & Text Tokens (Style #13 Obsidian) */
+  --bg-canvas: #09090B;
+  --bg-surface: #121318;
+  --bg-subtle: #0F1013;
+  --bg-elevated: #181A22;
+  --text-primary: #F4F4F5;
+  --text-muted: #A1A1AA;
+
+  /* Interactive & Border Tokens */
+  --accent-primary: #10B981;
+  --accent-primary-fg: #041E16;
+  --accent-secondary: #38BDF8;
+  --border-default: #27272A;
+  --border-strong: #5A5A5D;
+  --border-style: solid;
+  --focus-ring: #10B981;
+
+  /* Status Tokens */
+  --status-warning: #F59E0B;
+  --status-warning-bg: rgba(245, 158, 11, 0.14);
+  --status-warning-fg: #FDE68A;
+  --status-danger: #EF4444;
+  --status-danger-bg: rgba(239, 68, 68, 0.15);
+  --status-danger-fg: #FECACA;
+  --status-danger-contrast: #FFFFFF;
+  --status-success: #10B981;
+  --status-success-bg: rgba(16, 185, 129, 0.14);
+  --status-success-fg: #A7F3D0;
+  --status-info: #38BDF8;
+  --status-info-bg: rgba(56, 189, 248, 0.14);
+  --status-info-fg: #BAE6FD;
+
+  /* Provider Tokens (Custom Design Team Icon Slots) */
+  --provider-antigravity: #10B981;
+  --provider-claude: #F59E0B;
+  --provider-codex: #38BDF8;
+  --provider-grok: #E4E4E7;
+
+  /* Diff Tokens */
+  --diff-add-bg: rgba(16, 185, 129, 0.12);
+  --diff-add-fg: #34D399;
+  --diff-del-bg: rgba(239, 68, 68, 0.12);
+  --diff-del-fg: #F87171;
+
+  /* Cross-Framework Semantic Aliases */
+  --background: var(--bg-canvas);
+  --surface: var(--bg-surface);
+  --foreground: var(--text-primary);
+  --muted-foreground: var(--text-muted);
+  --primary: var(--accent-primary);
+  --primary-foreground: var(--accent-primary-fg);
+  --accent: var(--accent-secondary);
+  --border: var(--border-default);
+
+  /* Typography Stacks (1.250 Major Third) */
+  --font-display: "Space Grotesk", Geist, system-ui, sans-serif;
+  --font-body: Inter, "Geist Sans", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* Geometry & Elevation */
+  --radius-outer: 16px;
+  --radius-inner: 10px;
+  --border-width: 1px;
+  --shadow-surface: 0 1px 0 rgba(255, 255, 255, 0.06) inset;
+
+  /* Compositor Motion Budget (transform & opacity only) */
+  --motion-fast: 140ms;
+  --motion-base: 240ms;
+  --ease-standard: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-theme="outdoor"] {
+  color-scheme: light;
+
+  --bg-canvas: #F8FAFC;
+  --bg-surface: #FFFFFF;
+  --bg-subtle: #F1F5F9;
+  --bg-elevated: #E2E8F0;
+  --text-primary: #0F172A;
+  --text-muted: #475569;
+
+  --accent-primary: #047857;
+  --accent-primary-fg: #FFFFFF;
+  --accent-secondary: #0284C7;
+  --border-default: #CBD5E1;
+  --border-strong: #94A3B8;
+  --border-style: solid;
+  --focus-ring: #047857;
+
+  --status-warning: #B45309;
+  --status-warning-bg: rgba(217, 119, 6, 0.12);
+  --status-warning-fg: #78350F;
+  --status-danger: #DC2626;
+  --status-danger-bg: rgba(220, 38, 38, 0.11);
+  --status-danger-fg: #7F1D1D;
+  --status-success: #047857;
+  --status-success-bg: rgba(4, 120, 87, 0.11);
+  --status-success-fg: #064E3B;
+  --status-info: #0284C7;
+  --status-info-bg: rgba(2, 132, 199, 0.11);
+  --status-info-fg: #0C4A6E;
+
+  --provider-antigravity: #047857;
+  --provider-claude: #B45309;
+  --provider-codex: #0284C7;
+  --provider-grok: #1E293B;
+
+  --diff-add-bg: rgba(4, 120, 87, 0.10);
+  --diff-add-fg: #065F46;
+  --diff-del-bg: rgba(220, 38, 38, 0.10);
+  --diff-del-fg: #991B1B;
+
+  --shadow-surface: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+[data-theme="wireframe"] {
+  color-scheme: dark;
+
+  --bg-canvas: #111111;
+  --bg-surface: #1A1A1A;
+  --bg-subtle: #141414;
+  --bg-elevated: #222222;
+  --text-primary: #F0F0F0;
+  --text-muted: #A3A3A3;
+
+  --accent-primary: #E5E5E5;
+  --accent-primary-fg: #111111;
+  --accent-secondary: #D4D4D8;
+  --border-default: #52525B;
+  --border-strong: #A1A1AA;
+  --border-style: dashed;
+  --focus-ring: #FFFFFF;
+
+  --status-warning: #FBBF24;
+  --status-warning-bg: rgba(251, 191, 36, 0.10);
+  --status-warning-fg: #FDE68A;
+  --status-danger: #F87171;
+  --status-danger-bg: rgba(248, 113, 113, 0.12);
+  --status-danger-fg: #FECACA;
+  --status-success: #A3E635;
+  --status-success-bg: rgba(163, 230, 53, 0.10);
+  --status-success-fg: #ECFCCB;
+  --status-info: #D4D4D8;
+  --status-info-bg: rgba(212, 212, 216, 0.10);
+  --status-info-fg: #F4F4F5;
+
+  --provider-antigravity: #E5E5E5;
+  --provider-claude: #D4D4D8;
+  --provider-codex: #A1A1AA;
+  --provider-grok: #FAFAFA;
+
+  --diff-add-bg: rgba(163, 230, 53, 0.10);
+  --diff-add-fg: #BEF264;
+  --diff-del-bg: rgba(248, 113, 113, 0.10);
+  --diff-del-fg: #FCA5A5;
+
+  --shadow-surface: none;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+h1,
+h2,
+h3,
+h4,
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.025em;
+}
+
+code,
+pre,
+kbd,
+samp,
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Prevent iOS Safari zoom on input focus */
+input,
+textarea,
+select {
+  font-size: 16px;
+}
+
+.surface-card {
+  background-color: var(--bg-surface);
+  border: var(--border-width) var(--border-style) var(--border-default);
+  border-radius: var(--radius-outer);
+  box-shadow: var(--shadow-surface);
+}
+
+.surface-subtle {
+  background-color: var(--bg-subtle);
+  border: var(--border-width) var(--border-style) var(--border-default);
+  border-radius: var(--radius-inner);
+}
+
+/* Custom Project Slot Treatments (Design Team Skinning Hooks) */
+.project-slot-clapperboard {
+  border-left: 3px solid var(--accent-secondary);
+}
+
+.project-slot-terminal {
+  border-left: 3px solid var(--accent-primary);
+}
+
+.project-slot-cpu {
+  border-left: 3px solid var(--status-warning);
+}
+
+.project-slot-folder {
+  border-left: 3px solid var(--border-strong);
+}
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0.5rem 1rem;
+  background-color: var(--accent-primary);
+  color: var(--accent-primary-fg);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-inner);
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    transform var(--motion-fast) var(--ease-standard),
+    opacity var(--motion-fast) var(--ease-standard);
+}
+
+.btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  opacity: 0.94;
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0.5rem 0.875rem;
+  background-color: var(--bg-subtle);
+  color: var(--text-primary);
+  border: var(--border-width) var(--border-style) var(--border-default);
+  border-radius: var(--radius-inner);
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    transform var(--motion-fast) var(--ease-standard),
+    opacity var(--motion-fast) var(--ease-standard);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  opacity: 0.9;
+}
+
+.btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0.5rem 0.875rem;
+  background-color: var(--status-danger);
+  color: var(--status-danger-contrast);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-inner);
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    transform var(--motion-fast) var(--ease-standard),
+    opacity var(--motion-fast) var(--ease-standard);
+}
+
+.btn-danger:hover:not(:disabled) {
+  transform: translateY(-1px);
+  opacity: 0.92;
+}
+
+.btn-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0.375rem 0.75rem;
+  background-color: transparent;
+  color: var(--text-muted);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-inner);
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    transform var(--motion-fast) var(--ease-standard),
+    opacity var(--motion-fast) var(--ease-standard);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  color: var(--text-primary);
+  opacity: 0.9;
+}
+
+.skeleton-shimmer {
+  background-color: var(--bg-elevated);
+  border-radius: var(--radius-inner);
+  animation: og-pulse 1.5s var(--ease-standard) infinite;
+}
+
+@keyframes og-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

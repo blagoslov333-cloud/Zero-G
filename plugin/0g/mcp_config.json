@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "0g_mobile": {
+      "command": "C:/Users/blagoslov333/AppData/Local/Programs/Python/Python312/python.exe",
+      "args": [
+        "C:/Users/blagoslov333/.gemini/antigravity/scratch/0G/server/mcp_server.py"
+      ]
+    }
+  }
+}

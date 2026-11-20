@@ -1,0 +1,13 @@
+{
+  "name": "0g",
+  "displayName": "0G",
+  "version": "0.1.0",
+  "description": "Zero-weight multi-agent mobile remote, backpack laptop power governor, and phone-authored MCP tools for Antigravity, Claude Code, Codex CLI, and Grok Build.",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "Open 0G Aux Pane to pair my phone via QR and start Cloudflare Tunnel",
+    "Create a new phone-authored tool and expose it to Antigravity via MCP",
+    "Switch my backpack laptop to Ultra-Sip eco mode and inspect host vitals"
+  ],
+  "disabled": false
+}

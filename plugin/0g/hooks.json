@@ -1,0 +1,72 @@
+{
+  "0g-session-start": {
+    "enabled": true,
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "C:/Users/blagoslov333/AppData/Local/Programs/Python/Python312/python.exe -I -S hooks/shim.py --provider antigravity --event SessionStart",
+        "timeout": 5
+      }
+    ]
+  },
+  "0g-pre-invocation": {
+    "enabled": true,
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "C:/Users/blagoslov333/AppData/Local/Programs/Python/Python312/python.exe -I -S hooks/shim.py --provider antigravity --event PreInvocation",
+        "timeout": 5
+      }
+    ]
+  },
+  "0g-pre-tool-use": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "^(run_command|edit_file|write_file|write_to_file|replace_file_content|multi_replace_file_content|delete_file|browser_.*)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:/Users/blagoslov333/AppData/Local/Programs/Python/Python312/python.exe -I -S hooks/shim.py --provider antigravity --event PreToolUse",
+            "timeout": 40
+          }
+        ]
+      }
+    ]
+  },
+  "0g-post-tool-use": {
+    "enabled": true,
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:/Users/blagoslov333/AppData/Local/Programs/Python/Python312/python.exe -I -S hooks/shim.py --provider antigravity --event PostToolUse",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "0g-post-invocation": {
+    "enabled": true,
+    "PostInvocation": [
+      {
+        "type": "command",
+        "command": "C:/Users/blagoslov333/AppData/Local/Programs/Python/Python312/python.exe -I -S hooks/shim.py --provider antigravity --event PostInvocation",
+        "timeout": 5
+      }
+    ]
+  },
+  "0g-stop": {
+    "enabled": true,
+    "Stop": [
+      {
+        "type": "command",
+        "command": "C:/Users/blagoslov333/AppData/Local/Programs/Python/Python312/python.exe -I -S hooks/shim.py --provider antigravity --event Stop",
+        "timeout": 5
+      }
+    ]
+  }
+}

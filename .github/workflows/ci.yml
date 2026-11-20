@@ -1,0 +1,39 @@
+name: 0G CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  python-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+      - name: Byte-compile Python modules
+        run: |
+          python -m py_compile server/app.py server/auth.py server/contracts.py server/db.py server/git_ops.py server/host_control.py server/mcp_server.py server/mobile_tools.py server/power_governor.py server/pty_mux.py server/rules_engine.py server/security.py server/tunnel.py server/adapters/__init__.py server/adapters/base.py server/adapters/antigravity.py server/adapters/claude_code.py server/adapters/codex_cli.py server/adapters/grok_build.py hooks/shim.py plugin/0g/hooks/shim.py
+      - name: Run pytest suite
+        run: python -m pytest tests/ -v
+
+  web-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+      - name: Install and build web PWA
+        working-directory: web
+        run: npm ci && npm run build

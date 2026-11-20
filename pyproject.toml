@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zero-g"
+version = "0.1.0"
+description = "Zero-weight multi-agent mobile remote, backpack laptop power governor, and phone-authored MCP tools for Antigravity, Claude Code, Codex CLI, and Grok Build."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.12"
+authors = [
+  { name = "0G Contributors" }
+]
+keywords = ["antigravity", "claude-code", "codex-cli", "grok", "mcp", "mobile-remote", "pwa"]
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.30.0",
+  "pydantic>=2.0.0",
+  "cryptography>=42.0.0",
+  "websockets>=12.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "httpx>=0.27.0",
+]
+
+[project.scripts]
+zerog = "server.app:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["server*", "hooks*"]

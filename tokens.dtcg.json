@@ -1,0 +1,201 @@
+{
+  "$schema": "https://tr.designtokens.org/format/",
+  "$description": "Style #13: Obsidian Dark Bento Grid (obsidian-dark-bento-grid) — Volume 2: Modern SaaS, Product Marketing & Brand Surfaces",
+  "$extensions": {
+    "design.skillkit": {
+      "number": "13",
+      "id": "obsidian-dark-bento-grid",
+      "name": "Obsidian Dark Bento Grid",
+      "volume": 2,
+      "surface_mode": "Persuade",
+      "platforms": [
+        "web",
+        "desktop"
+      ]
+    }
+  },
+  "color": {
+    "surface": {
+      "canvas": {
+        "$value": "#09090B",
+        "$type": "color"
+      },
+      "card": {
+        "$value": "#121318",
+        "$type": "color"
+      },
+      "subtle": {
+        "$value": "#0F1013",
+        "$type": "color"
+      }
+    },
+    "text": {
+      "primary": {
+        "$value": "#F4F4F5",
+        "$type": "color"
+      },
+      "secondary": {
+        "$value": "#A1A1AA",
+        "$type": "color"
+      },
+      "muted": {
+        "$value": "#A1A1AA",
+        "$type": "color"
+      }
+    },
+    "border": {
+      "default": {
+        "$value": "#27272A",
+        "$type": "color"
+      },
+      "strong": {
+        "$value": "#5A5A5D",
+        "$type": "color"
+      }
+    },
+    "accent": {
+      "primary": {
+        "$value": "#10B981",
+        "$type": "color"
+      },
+      "primaryForeground": {
+        "$value": "#041E16",
+        "$type": "color"
+      },
+      "secondary": {
+        "$value": "#38BDF8",
+        "$type": "color"
+      }
+    },
+    "focus": {
+      "ring": {
+        "$value": "#10B981",
+        "$type": "color"
+      }
+    },
+    "status": {
+      "success": {
+        "$value": "#34D399",
+        "$type": "color"
+      },
+      "warning": {
+        "$value": "#FBBF24",
+        "$type": "color"
+      },
+      "danger": {
+        "$value": "#F87171",
+        "$type": "color"
+      }
+    }
+  },
+  "typography": {
+    "family": {
+      "display": {
+        "$value": "Space Grotesk / Geist (700, -0.025em)",
+        "$type": "fontFamily"
+      },
+      "body": {
+        "$value": "Inter / Geist Sans (400, 1.5)",
+        "$type": "fontFamily"
+      },
+      "mono": {
+        "$value": "JetBrains Mono",
+        "$type": "fontFamily"
+      }
+    },
+    "scaleRatio": {
+      "$value": "1.250 (Major Third)",
+      "$type": "string"
+    },
+    "size": {
+      "xs": {
+        "$value": "12px",
+        "$type": "dimension"
+      },
+      "sm": {
+        "$value": "14px",
+        "$type": "dimension"
+      },
+      "base": {
+        "$value": "16px",
+        "$type": "dimension"
+      },
+      "lg": {
+        "$value": "20px",
+        "$type": "dimension"
+      },
+      "xl": {
+        "$value": "28px",
+        "$type": "dimension"
+      },
+      "2xl": {
+        "$value": "44px",
+        "$type": "dimension"
+      }
+    }
+  },
+  "spacing": {
+    "xs": {
+      "$value": "4px",
+      "$type": "dimension"
+    },
+    "sm": {
+      "$value": "8px",
+      "$type": "dimension"
+    },
+    "md": {
+      "$value": "16px",
+      "$type": "dimension"
+    },
+    "lg": {
+      "$value": "24px",
+      "$type": "dimension"
+    },
+    "xl": {
+      "$value": "32px",
+      "$type": "dimension"
+    },
+    "2xl": {
+      "$value": "48px",
+      "$type": "dimension"
+    },
+    "3xl": {
+      "$value": "64px",
+      "$type": "dimension"
+    }
+  },
+  "geometry": {
+    "radius": {
+      "outer": {
+        "$value": "16px",
+        "$type": "dimension"
+      },
+      "inner": {
+        "$value": "10px",
+        "$type": "dimension"
+      },
+      "pill": {
+        "$value": "9999px",
+        "$type": "dimension"
+      }
+    },
+    "borderWidth": {
+      "default": {
+        "$value": "1px",
+        "$type": "dimension"
+      }
+    },
+    "shadow": {
+      "surface": {
+        "$value": "0 1px 0 rgba(255,255,255,0.06) inset",
+        "$type": "string"
+      }
+    }
+  },
+  "motion": {
+    "signature": {
+      "$value": "160ms compositor transform hover lift with subtle border beam.",
+      "$type": "string"
+    }
+  }
+}

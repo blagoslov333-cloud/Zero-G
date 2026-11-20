@@ -1,0 +1,21 @@
+{
+  "command": "node",
+  "args": ["main.mjs"],
+  "env": {
+    "SIDECAR_HOST": "127.0.0.1",
+    "SIDECAR_PORT": "8790"
+  },
+  "restart_policy": "always",
+  "display_name": "0G Aux Pane",
+  "description": "Zero-weight mobile remote Aux Pane for QR phone pairing, Cloudflare/Tailscale tunnel control, Backpack Power Governor, and PANIC lock.",
+  "has_web_ui": true,
+  "ui_config": {
+    "views": [
+      {
+        "path": "/",
+        "entrypoint": "SIDECAR_UI_ENTRYPOINT_AUX_PANE",
+        "title": "0G"
+      }
+    ]
+  }
+}
