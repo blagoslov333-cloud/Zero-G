@@ -38,7 +38,7 @@ npm --prefix web install
 npm --prefix web run build
 ```
 
-### 2. Start the 0G Daemon
+### 2. Start the 0G Daemon (Auto-Starts Outbound Phone Tunnel)
 
 ```powershell
 python -m server.app
@@ -46,13 +46,13 @@ python -m server.app
 zerog
 ```
 
-The daemon binds strictly to `127.0.0.1:8790` and serves both the Mobile PWA (`/`) and the Desktop Aux Pane (`/?view=auxpane`). Re-running `python -m server.app` when port `8790` is already running prints status cleanly instead of raising `[WinError 10048]`.
+The local server binds strictly to `127.0.0.1:8790` on your laptop (never open `127.0.0.1:8790` directly on your phone — `127.0.0.1` is laptop-only). When `cloudflared` is installed, `python -m server.app` automatically opens an **outbound** Cloudflare Tunnel over your phone's hotspot internet and prints the **Phone Public HTTPS Link** (`https://*.trycloudflare.com/?pair=...`) right in PowerShell, monitoring DNS health and auto-restarting the tunnel if a temporary link drops. Re-running `python -m server.app` when port `8790` is already running prints the active local and phone URLs cleanly instead of raising `[WinError 10048]`.
 
-### 3. Pair Your Phone via Hotspot-Safe Tunnel
+### 3. Pair & Open on Your Phone Over Hotspot
 
-- **Cloudflare Tunnel (Primary):** Works outbound over mobile hotspots / CGNAT with zero port forwarding (`cloudflared tunnel --url http://127.0.0.1:8790`). Install via `winget install Cloudflare.cloudflared`.
+- **Cloudflare Tunnel (Primary):** Works outbound over mobile hotspots / CGNAT with zero port forwarding and zero extra phone apps (`cloudflared tunnel --url http://127.0.0.1:8790`). Install once on your laptop via `winget install Cloudflare.cloudflared` if missing.
 - **Tailscale Serve (Secondary):** Private tailnet HTTPS/WSS (`tailscale serve`).
-- Open the **Desktop Aux Pane** (`http://127.0.0.1:8790/?view=auxpane`) or the Antigravity sidecar (`plugin/0g`) and scan the QR code or enter the 6-digit pairing code on your phone.
+- Open the printed **`https://*.trycloudflare.com/?pair=...`** link directly on your phone, or scan the QR code from the **Desktop Aux Pane** (`http://127.0.0.1:8790/?view=auxpane`), then tap **Add to Home Screen** in your mobile browser.
 
 ---
 

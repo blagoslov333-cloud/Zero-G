@@ -8,8 +8,10 @@ import logging
 import os
 import re
 import shutil
+import socket
 import subprocess
 import time
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -547,6 +549,39 @@ class TunnelSupervisor:
     def generate_qr_svg(self, url: str | None = None, fg: str = "#09090B", bg: str = "#FFFFFF") -> str:
         target = url or self.public_url or f"http://127.0.0.1:{self.local_port}"
         return generate_qr_svg(target, fg=fg, bg=bg)
+
+    def check_public_url_alive(self) -> bool:
+        """Verify active public tunnel URL is non-loopback, alive, and resolves via DNS."""
+        if self.status != "running" or not self.public_url:
+            return False
+        if self.backend == "local_only":
+            return True
+        if self.public_url.startswith("http://127.0.0.1"):
+            return False
+        if self.backend == "cloudflare" and self._proc is not None and self._proc.returncode is not None:
+            return False
+        host = urllib.parse.urlparse(self.public_url).hostname
+        if not host:
+            return False
+        try:
+            socket.getaddrinfo(host, 443)
+            return True
+        except OSError:
+            return False
+
+    async def ensure_healthy(self, min_age_sec: float = 20.0) -> tuple[bool, dict[str, Any]]:
+        """Auto-restart Cloudflare quick tunnel if the child exited or trycloudflare DNS expired."""
+        if self.backend == "cloudflare" and self.status == "running":
+            if self._proc is not None and self._proc.returncode is not None:
+                logger.warning("Cloudflare tunnel process exited (rc=%s); restarting", self._proc.returncode)
+                return True, await self.start(backend="cloudflare")
+            if self.started_at is not None and (time.time() - self.started_at) < min_age_sec:
+                return False, self.get_status()
+            alive = await asyncio.to_thread(self.check_public_url_alive)
+            if not alive:
+                logger.warning("Cloudflare tunnel URL %s failed DNS health check; restarting", self.public_url)
+                return True, await self.start(backend="cloudflare")
+        return False, self.get_status()
 
     async def start(
         self,

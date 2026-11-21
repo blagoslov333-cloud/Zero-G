@@ -9,6 +9,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -480,12 +481,18 @@ def _require_local_token(request: Request, state: ZeroGState) -> None:
 def create_app(
     data_dir: str | Path | None = None,
     db_path: str | Path | None = None,
+    auto_tunnel: bool | None = None,
 ) -> FastAPI:
     resolved_data_dir = Path(
         data_dir or os.environ.get("ZEROG_DATA_DIR", Path.home() / ".0g" / "data")
     )
     resolved_data_dir.mkdir(parents=True, exist_ok=True)
     resolved_db_path = Path(db_path) if db_path else (resolved_data_dir / "0g.sqlite3")
+    enable_auto_tunnel = (
+        auto_tunnel
+        if auto_tunnel is not None
+        else (os.environ.get("ZEROG_AUTO_TUNNEL", "").lower() in ("1", "true", "yes"))
+    )
 
     state = ZeroGState(data_dir=resolved_data_dir, db_path=resolved_db_path)
 
@@ -497,25 +504,86 @@ def create_app(
                 await _maybe_await(state.power_governor.start())
             except Exception:
                 pass
-        yield
-        for _, (task, ev) in list(state.active_worker_tasks.items()):
-            ev.set()
-            task.cancel()
-        if state.power_governor is not None and hasattr(state.power_governor, "stop"):
+
+        if enable_auto_tunnel and state.tunnel_supervisor is not None:
             try:
-                await _maybe_await(state.power_governor.stop())
+                cf_avail = (
+                    state.tunnel_supervisor.binary_status()
+                    .get("cloudflare", {})
+                    .get("available", False)
+                )
             except Exception:
-                pass
-        if state.tunnel_supervisor is not None and hasattr(state.tunnel_supervisor, "stop"):
+                cf_avail = False
+            if cf_avail:
+                try:
+                    t_status = await _maybe_await(state.tunnel_supervisor.start(backend="cloudflare"))
+                    pub_url = str(t_status.get("publicUrl") or state.get_public_url())
+                    pair = state.auth.issue_pairing_code(ttl_sec=3600, public_url=pub_url)
+                    print(
+                        "\n[0G Bridge Daemon Ready]\n"
+                        "  Laptop Web App                : http://127.0.0.1:8790/\n"
+                        "  Laptop Aux Pane               : http://127.0.0.1:8790/?view=auxpane\n"
+                        f"  Phone Public HTTPS URL        : {pub_url}\n"
+                        f"  Phone Pairing Link (1h)       : {pair['pairingUrl']}\n"
+                        f"  6-Digit Pairing Code          : {pair['code']}\n",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                except Exception:
+                    pass
+
+        async def _tunnel_watchdog() -> None:
             try:
-                await _maybe_await(state.tunnel_supervisor.stop())
-            except Exception:
+                while True:
+                    await asyncio.sleep(45.0)
+                    if state.tunnel_supervisor is not None and hasattr(state.tunnel_supervisor, "ensure_healthy"):
+                        try:
+                            restarted, t_status = await state.tunnel_supervisor.ensure_healthy()
+                            if restarted:
+                                pub_url = str(t_status.get("publicUrl") or state.get_public_url())
+                                pair = state.auth.get_active_pairing(public_url=pub_url)
+                                payload = {
+                                    **t_status,
+                                    "pairing": {**pair, "pairUrl": pair["pairingUrl"], "url": pair["pairingUrl"]},
+                                }
+                                state.db.emit_event("tunnel.updated", payload)
+                                print(
+                                    f"[0G Tunnel Watchdog] Renewed Phone HTTPS URL: {pair['pairingUrl']} (Code: {pair['code']})",
+                                    file=sys.stderr,
+                                    flush=True,
+                                )
+                        except Exception:
+                            pass
+            except asyncio.CancelledError:
                 pass
-        if state.pty_mux is not None and hasattr(state.pty_mux, "terminate_all"):
+
+        tunnel_watchdog_task = asyncio.create_task(_tunnel_watchdog())
+        try:
+            yield
+        finally:
+            tunnel_watchdog_task.cancel()
             try:
-                await _maybe_await(state.pty_mux.terminate_all())
-            except Exception:
+                await tunnel_watchdog_task
+            except BaseException:
                 pass
+            for _, (task, ev) in list(state.active_worker_tasks.items()):
+                ev.set()
+                task.cancel()
+            if state.power_governor is not None and hasattr(state.power_governor, "stop"):
+                try:
+                    await _maybe_await(state.power_governor.stop())
+                except Exception:
+                    pass
+            if state.tunnel_supervisor is not None and hasattr(state.tunnel_supervisor, "stop"):
+                try:
+                    await _maybe_await(state.tunnel_supervisor.stop())
+                except Exception:
+                    pass
+            if state.pty_mux is not None and hasattr(state.pty_mux, "terminate_all"):
+                try:
+                    await _maybe_await(state.pty_mux.terminate_all())
+                except Exception:
+                    pass
 
     app = FastAPI(
         title="0G Local-First Mobile & Host Bridge Daemon",
@@ -2303,6 +2371,11 @@ def create_app(
     @app.get("/api/tunnel/status")
     @app.post("/api/tunnel/status")
     async def api_tunnel_status() -> dict[str, Any]:
+        if state.tunnel_supervisor is not None and hasattr(state.tunnel_supervisor, "ensure_healthy"):
+            try:
+                await state.tunnel_supervisor.ensure_healthy()
+            except Exception:
+                pass
         status = state.get_tunnel_status()
         pairing = state.auth.get_active_pairing(public_url=status.get("publicUrl") or "http://127.0.0.1:8790")
         qr_svg = state.render_qr_svg(pairing["pairingUrl"])
@@ -2580,15 +2653,47 @@ def main() -> None:
     try:
         with urllib.request.urlopen(f"http://{host}:{port}/api/health", timeout=0.8) as resp:
             if resp.status == 200:
+                t_info: dict[str, Any] = {}
+                try:
+                    with urllib.request.urlopen(f"http://{host}:{port}/api/tunnel/status", timeout=15.0) as t_resp:
+                        t_info = json.loads(t_resp.read().decode("utf-8"))
+                except Exception:
+                    t_info = {}
+                pub_url = str(t_info.get("publicUrl") or "")
+                if t_info.get("status") != "running" or not pub_url or pub_url.startswith("http://127.0.0.1"):
+                    try:
+                        req = urllib.request.Request(
+                            f"http://{host}:{port}/api/tunnel/start",
+                            data=json.dumps({"backend": "cloudflare"}).encode("utf-8"),
+                            headers={"Content-Type": "application/json"},
+                            method="POST",
+                        )
+                        with urllib.request.urlopen(req, timeout=18.0) as s_resp:
+                            t_info = json.loads(s_resp.read().decode("utf-8"))
+                    except Exception:
+                        pass
+                pairing = t_info.get("pairing") or {}
+                pair_url = pairing.get("pairingUrl") or pairing.get("url") or t_info.get("publicUrl") or "(start Cloudflare tunnel in Host tab)"
+                pair_code = pairing.get("code") or "N/A"
                 print(
-                    f"0G Bridge Daemon is already running at http://{host}:{port} "
-                    f"(Aux Pane: http://{host}:{port}/?view=auxpane) — no second server needed!"
+                    f"0G Bridge Daemon is already running:\n"
+                    f"  Laptop Only (localhost)                : http://{host}:{port}/\n"
+                    f"  Laptop Aux Pane                        : http://{host}:{port}/?view=auxpane\n"
+                    f"  Phone Public HTTPS Link (over hotspot) : {pair_url}\n"
+                    f"  Phone Pairing Code                     : {pair_code}"
                 )
                 return
     except Exception:
         pass
 
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    if os.environ.get("ZEROG_NO_AUTO_TUNNEL", "").lower() not in ("1", "true", "yes"):
+        os.environ.setdefault("ZEROG_AUTO_TUNNEL", "1")
+        # Recreate app after setting ZEROG_AUTO_TUNNEL so lifespan sees the updated env flag
+        run_app = create_app()
+    else:
+        run_app = app
+
+    uvicorn.run(run_app, host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":

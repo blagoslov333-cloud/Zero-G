@@ -777,12 +777,20 @@ def test_windows_host_modules_and_audit_chain(tmp_path: Path) -> None:
     disc = gm.discard_worktree(str(repo), wt["worktreePath"], wt["branchName"])
     assert disc["ok"] is True
 
-    # TunnelSupervisor QR SVG + status fields
+    # TunnelSupervisor QR SVG + status fields + dead-DNS detection
     tsup = TunnelSupervisor(local_port=8790)
     tstat = tsup.get_status()
     assert "cloudflaredInstalled" in tstat
     assert "tailscaleInstalled" in tstat
     assert "qrSvg" in tstat
+    assert tsup.check_public_url_alive() is False
+    tsup.backend = "cloudflare"
+    tsup.status = "running"
+    tsup.public_url = "https://dead-nonexistent-0g-host-999999.trycloudflare.com"
+    tsup.started_at = time.time() - 60
+    assert tsup.check_public_url_alive() is False
+    tsup.status = "stopped"
+    tsup.public_url = None
     svg = generate_qr_svg("https://demo.trycloudflare.com/?pair=123456")
     mat = _build_qr_matrix("https://demo.trycloudflare.com/?pair=123456")
     assert svg.startswith("<svg") and svg.endswith("</svg>")
