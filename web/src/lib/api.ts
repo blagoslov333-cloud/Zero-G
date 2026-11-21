@@ -1,5 +1,16 @@
 import type {
   AgentGateMode,
+  AgyArtifactContentResponse,
+  AgyConversationDetail,
+  AgyConversationSummary,
+  AgyCreateConversationRequest,
+  AgyCreateConversationResponse,
+  AgyCustomizationsResponse,
+  AgyFileReadResponse,
+  AgyFilesListResponse,
+  AgyProject,
+  AgySendMessageResponse,
+  AgyTerminalExecResponse,
   ApprovalDecisionRequest,
   ApprovalItem,
   ArtifactItem,
@@ -437,5 +448,78 @@ export const api = {
     request<PtySessionInfo>("/api/pty/sessions", {
       method: "POST",
       body: JSON.stringify({ cwd: cwd || null }),
+    }),
+
+  /* Antigravity Desktop Bridge (/api/agy/*) */
+  getAgyProjects: async (): Promise<AgyProject[]> => {
+    const data = await request<{ projects?: AgyProject[] }>("/api/agy/projects");
+    return data.projects || [];
+  },
+
+  getAgyConversations: async (opts?: {
+    projectPath?: string;
+    includeSubagents?: boolean;
+    limit?: number;
+  }): Promise<AgyConversationSummary[]> => {
+    const params = new URLSearchParams();
+    if (opts?.projectPath) params.set("projectPath", opts.projectPath);
+    params.set("includeSubagents", String(Boolean(opts?.includeSubagents)));
+    params.set("limit", String(opts?.limit ?? 60));
+    const data = await request<{ conversations?: AgyConversationSummary[] }>(
+      `/api/agy/conversations?${params.toString()}`
+    );
+    return data.conversations || [];
+  },
+
+  getAgyConversationDetail: (conversationId: string, limit = 150) =>
+    request<AgyConversationDetail>(
+      `/api/agy/conversations/${encodeURIComponent(conversationId)}?limit=${limit}`
+    ),
+
+  createAgyConversation: (body: AgyCreateConversationRequest) =>
+    request<AgyCreateConversationResponse>("/api/agy/conversations/new", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  sendAgyMessage: (conversationId: string, message: string) =>
+    request<AgySendMessageResponse>(
+      `/api/agy/conversations/${encodeURIComponent(conversationId)}/message`,
+      {
+        method: "POST",
+        body: JSON.stringify({ message }),
+      }
+    ),
+
+  getAgyArtifact: (conversationId: string, path: string) =>
+    request<AgyArtifactContentResponse>(
+      `/api/agy/conversations/${encodeURIComponent(conversationId)}/artifact?path=${encodeURIComponent(path)}`
+    ),
+
+  listAgyFiles: (projectPath: string, dir = "") => {
+    const params = new URLSearchParams();
+    params.set("projectPath", projectPath);
+    if (dir) params.set("dir", dir);
+    return request<AgyFilesListResponse>(
+      `/api/agy/files/list?${params.toString()}`
+    );
+  },
+
+  readAgyFile: (projectPath: string, path: string) => {
+    const params = new URLSearchParams();
+    params.set("projectPath", projectPath);
+    params.set("path", path);
+    return request<AgyFileReadResponse>(
+      `/api/agy/files/read?${params.toString()}`
+    );
+  },
+
+  getAgyCustomizations: () =>
+    request<AgyCustomizationsResponse>("/api/agy/customizations"),
+
+  execAgyTerminal: (command: string, cwd?: string | null) =>
+    request<AgyTerminalExecResponse>("/api/agy/terminal/exec", {
+      method: "POST",
+      body: JSON.stringify({ command, cwd: cwd || null }),
     }),
 };

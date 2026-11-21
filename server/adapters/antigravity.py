@@ -91,54 +91,13 @@ class AntigravityAdapter(AgentProviderAdapter):
     display_name: str = "Antigravity"
 
     def discover_projects(self, roots: list[str] | None = None) -> list[ProjectSummary]:
-        """Scan Antigravity scratch roots and ensure the Video production project exists."""
+        """Scan configured Antigravity project roots for real existing workspace directories."""
         scan_roots = [Path(r).expanduser() for r in roots] if roots else default_project_roots()
         projects = super().discover_projects(roots=[str(r) for r in scan_roots])
-
-        has_video_proj = any(
-            p.id == "video-production" or p.name.lower() == "video production"
-            for p in projects
-        )
-        if has_video_proj:
-            for proj in projects:
-                if proj.name.lower() == "video production":
-                    proj.icon = "clapperboard"
-                    proj.accentToken = "--accent-secondary"
-            return projects
-
-        video_candidates = [Path.home() / "Videos" / "Video production"]
-        for root in scan_roots:
-            video_candidates.append(root / "Video production")
-            video_candidates.append(root / "video-production")
-
-        existing_video_dir = next((cand for cand in video_candidates if cand.is_dir()), None)
-        if existing_video_dir is not None:
-            projects.append(
-                ProjectSummary(
-                    id="video-production",
-                    name="Video production",
-                    path=str(existing_video_dir.resolve()),
-                    icon="clapperboard",
-                    accentToken="--accent-secondary",
-                    providerHint=self.provider_id,
-                    gitBranch=probe_git_branch(existing_video_dir),
-                    isSeededDemo=False,
-                )
-            )
-        else:
-            seeded_path = Path.home() / "Videos" / "Video production"
-            projects.append(
-                ProjectSummary(
-                    id="video-production",
-                    name="Video production",
-                    path=str(seeded_path),
-                    icon="clapperboard",
-                    accentToken="--accent-secondary",
-                    providerHint=self.provider_id,
-                    gitBranch=None,
-                    isSeededDemo=True,
-                )
-            )
+        for proj in projects:
+            if proj.name.lower() == "video production":
+                proj.icon = "clapperboard"
+                proj.accentToken = "--accent-secondary"
         return projects
 
     def tail_transcript(

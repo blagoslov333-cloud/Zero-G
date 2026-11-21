@@ -30,7 +30,7 @@ export type ApprovalStatus =
 export type MobileToolRuntime = "phone_js" | "phone_builtin" | "host_command";
 export type TunnelBackend = "cloudflare" | "tailscale" | "local_only";
 export type ThemePreset = "obsidian" | "outdoor" | "wireframe";
-export type ActiveTab = "projects" | "inbox" | "new" | "tools" | "host";
+export type ActiveTab = "chat" | "projects" | "terminal" | "laptop";
 
 export interface ProjectSummary {
   id: string;
@@ -323,4 +323,150 @@ export interface NotifyCardItem {
   body: string;
   severity: "info" | "success" | "warning" | "danger";
   ts: number;
+}
+
+/* ==========================================================================
+ * Antigravity Desktop Bridge (/api/agy/*) Contracts
+ * ========================================================================== */
+
+export interface AgyProject {
+  id: string;
+  name: string;
+  path: string;
+  gitBranch?: string | null;
+  dirtyCount: number;
+  conversationCount: number;
+  lastModifiedAt: number;
+}
+
+export type AgyConversationStatus = "running" | "idle" | "killed";
+
+export interface AgyConversationSummary {
+  id: string;
+  title: string;
+  status: AgyConversationStatus;
+  stepCount: number;
+  lastModifiedAt: number;
+  workspacePaths: string[];
+  projectName?: string | null;
+  parentConversationId?: string | null;
+  agentName?: string | null;
+  subagentCount: number;
+  hasSwarm: boolean;
+}
+
+export interface AgyToolCall {
+  name: string;
+  summary: string;
+  argsPreview?: string | null;
+  outputPreview?: string | null;
+}
+
+export interface AgyMessage {
+  id: string;
+  stepIndex: number;
+  role: "user" | "assistant";
+  content: string;
+  thinking?: string | null;
+  model?: string | null;
+  toolCalls: AgyToolCall[];
+  createdAt: number;
+}
+
+export interface AgyArtifactSummary {
+  name: string;
+  relativePath: string;
+  kind: "markdown" | "html" | "image" | "file" | string;
+  sizeBytes: number;
+  modifiedAt: number;
+}
+
+export interface AgyConversationDetail {
+  conversation: AgyConversationSummary;
+  messages: AgyMessage[];
+  artifacts: AgyArtifactSummary[];
+  subagents: AgyConversationSummary[];
+  swarmPlan?: Record<string, unknown> | null;
+}
+
+export interface AgyCreateConversationRequest {
+  prompt: string;
+  title?: string | null;
+  model?: string | null;
+  workspacePath?: string | null;
+}
+
+export interface AgyCreateConversationResponse {
+  ok: boolean;
+  conversationId: string;
+  title: string;
+  deliveredVia: string;
+}
+
+export interface AgySendMessageResponse {
+  ok: boolean;
+  conversationId: string;
+  deliveredVia: string;
+}
+
+export interface AgyArtifactContentResponse {
+  ok: boolean;
+  name: string;
+  relativePath: string;
+  kind: string;
+  content?: string | null;
+  dataUri?: string | null;
+}
+
+export interface AgyFileEntry {
+  name: string;
+  relPath: string;
+  isDir: boolean;
+  sizeBytes: number;
+  modifiedAt: number;
+}
+
+export interface AgyFilesListResponse {
+  ok: boolean;
+  projectPath: string;
+  dir: string;
+  entries: AgyFileEntry[];
+}
+
+export interface AgyFileReadResponse {
+  ok: boolean;
+  projectPath: string;
+  path: string;
+  name: string;
+  content: string;
+  lineCount: number;
+  truncated: boolean;
+}
+
+export interface AgyCustomizationEntry {
+  name?: string;
+  id?: string;
+  description?: string;
+  enabled?: boolean;
+  path?: string;
+  command?: string;
+  source?: string;
+  [key: string]: unknown;
+}
+
+export interface AgyCustomizationsResponse {
+  plugins: Array<AgyCustomizationEntry | string>;
+  skills: Array<AgyCustomizationEntry | string>;
+  rules: Array<AgyCustomizationEntry | string>;
+  slashCommands: Array<AgyCustomizationEntry | string>;
+}
+
+export interface AgyTerminalExecResponse {
+  ok: boolean;
+  returncode: number;
+  stdout: string;
+  stderr: string;
+  cwd: string;
+  durationMs: number;
+  timedOut: boolean;
 }

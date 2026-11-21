@@ -5,40 +5,43 @@ import {
   BatteryCharging,
   BellRing,
   Check,
+  ChevronDown,
+  ChevronRight,
   Copy,
   Cpu,
   Fingerprint,
   HardDrive,
   KeyRound,
+  Lock,
   MonitorOff,
+  Puzzle,
   Radio,
+  RefreshCw,
   Server,
-  Terminal,
+  ShieldAlert,
+  ShieldCheck,
+  Unlock,
   Zap,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { useZeroG } from "../lib/store";
-import type { PowerGear, TunnelBackend } from "../types/contracts";
-import { ProviderBadge } from "./ProviderBadge";
+import type {
+  AgyCustomizationEntry,
+  PowerGear,
+  TunnelBackend,
+} from "../types/contracts";
 import { QrSvg } from "./QrSvg";
 
 const POWER_GEARS: Array<{ id: PowerGear; label: string; desc: string }> = [
   { id: "ultra_sip", label: "Ultra-Sip", desc: "60% CPU cap · S0 ready" },
   { id: "auto_turbo", label: "Auto-Turbo", desc: "100% burst on active job" },
-  { id: "balanced", label: "Balanced", desc: "Windows Balanced overlay" },
+  { id: "balanced", label: "Balanced", desc: "Standard Windows profile" },
   { id: "max_turbo", label: "Max Turbo", desc: "Full clock · High perf" },
   {
     id: "low_battery_guard",
-    label: "Low-Batt Guard",
+    label: "Low Battery Guard",
     desc: "Strict power saving",
   },
-];
-
-const TERMINAL_PRESETS = [
-  { label: "git status", cmd: "git status -sb\r" },
-  { label: "nvidia-smi", cmd: "nvidia-smi\r" },
-  { label: "pytest", cmd: "pytest -q\r" },
-  { label: "ports", cmd: "netstat -ano -p TCP | Select-String LISTENING\r" },
 ];
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
@@ -53,31 +56,43 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
   return outputArray;
 }
 
-export const HostTab: React.FC = () => {
+function renderCustomizationLabel(entry: AgyCustomizationEntry | string): {
+  title: string;
+  subtitle?: string;
+} {
+  if (typeof entry === "string") {
+    return { title: entry };
+  }
+  return {
+    title: entry.name || entry.command || entry.id || "Unnamed item",
+    subtitle: entry.description || entry.path || entry.source || undefined,
+  };
+}
+
+export const LaptopTab: React.FC = () => {
   const {
     hostGlance,
     agentGateMode,
     setAgentGateMode,
     updatePowerGear,
-    ptySessions,
-    activePtyId,
-    setActivePtyId,
-    ptyOutputBySession,
-    createPty,
-    sendPtyInput,
+    panicLock,
+    unlockHost,
     tunnelStatus,
     startTunnel,
     stopTunnel,
     pairingCode,
     generatePairingCode,
-    hookConfigs,
+    customizations,
+    refreshAgyData,
   } = useZeroG();
 
-  const [termInput, setTermInput] = useState("");
   const [autoHibernate, setAutoHibernate] = useState(false);
-  const [securityNotice, setSecurityNotice] = useState<string | null>(null);
+  const [showCustomizations, setShowCustomizations] = useState(false);
+  const [refreshingCust, setRefreshingCust] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [busyTunnel, setBusyTunnel] = useState(false);
+  const [busyPanic, setBusyPanic] = useState(false);
+  const [securityNotice, setSecurityNotice] = useState<string | null>(null);
 
   const handleCopy = async (id: string, text: string) => {
     try {
@@ -89,11 +104,22 @@ export const HostTab: React.FC = () => {
     }
   };
 
-  const handleSendTerminal = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!activePtyId || !termInput.trim()) return;
-    sendPtyInput(activePtyId, termInput + "\r");
-    setTermInput("");
+  const handleTunnelStart = async (backend: TunnelBackend) => {
+    setBusyTunnel(true);
+    try {
+      await startTunnel(backend);
+    } finally {
+      setBusyTunnel(false);
+    }
+  };
+
+  const handleRefreshCustomizations = async () => {
+    setRefreshingCust(true);
+    try {
+      await refreshAgyData();
+    } finally {
+      setRefreshingCust(false);
+    }
   };
 
   const handleEnablePush = async () => {
@@ -115,7 +141,7 @@ export const HostTab: React.FC = () => {
         applicationServerKey: urlBase64ToUint8Array(publicKey),
       });
       await api.subscribePush(sub.toJSON());
-      setSecurityNotice("Web Push enabled (zero-secret alert channel ready).");
+      setSecurityNotice("Web Push alerts enabled on this phone.");
     } catch (err) {
       setSecurityNotice(
         err instanceof Error ? err.message : "Failed to enable Web Push"
@@ -128,8 +154,11 @@ export const HostTab: React.FC = () => {
     try {
       const options = await api.getWebAuthnOptions("register");
       if (!window.PublicKeyCredential || !navigator.credentials) {
-        await api.verifyWebAuthn({ fallbackPinVerified: true, challenge: options.challenge });
-        setSecurityNotice("Passkey fallback verified with daemon.");
+        await api.verifyWebAuthn({
+          fallbackPinVerified: true,
+          challenge: options.challenge,
+        });
+        setSecurityNotice("Passkey fallback verified with laptop daemon.");
         return;
       }
       const challengeStr = String(options.challenge || "0g-challenge");
@@ -137,7 +166,7 @@ export const HostTab: React.FC = () => {
       const cred = (await navigator.credentials.create({
         publicKey: {
           challenge: challengeBytes,
-          rp: { name: "0G Remote Control", id: window.location.hostname },
+          rp: { name: "Zero-G Remote", id: window.location.hostname },
           user: {
             id: new TextEncoder().encode("0g-owner"),
             name: "0g-owner",
@@ -154,20 +183,11 @@ export const HostTab: React.FC = () => {
         credId: cred?.id || "webauthn-enrolled",
         challenge: challengeStr,
       });
-      setSecurityNotice("WebAuthn Passkey enrolled for Tier-3 step-up & unlock.");
+      setSecurityNotice("Passkey enrolled for high-risk approvals & unlock.");
     } catch (err) {
       setSecurityNotice(
-        err instanceof Error ? err.message : "Passkey enrollment cancelled or failed"
+        err instanceof Error ? err.message : "Passkey enrollment cancelled"
       );
-    }
-  };
-
-  const handleTunnelStart = async (backend: TunnelBackend) => {
-    setBusyTunnel(true);
-    try {
-      await startTunnel(backend);
-    } finally {
-      setBusyTunnel(false);
     }
   };
 
@@ -182,17 +202,30 @@ export const HostTab: React.FC = () => {
       ? Math.round((hostGlance.ramUsedMb / hostGlance.ramTotalMb) * 100)
       : 0;
 
+  const isLocked = Boolean(hostGlance?.hostLocked);
+  const custTotal =
+    (customizations?.plugins?.length || 0) +
+    (customizations?.skills?.length || 0) +
+    (customizations?.rules?.length || 0) +
+    (customizations?.slashCommands?.length || 0);
+
   return (
-    <div className="space-y-5">
-      {/* 0. Agent Approval Gate (Independent of Hardware Power) */}
-      <section aria-label="Agent Gate Mode" className="surface-card p-3.5 space-y-2.5">
-        <div>
-          <h2 className="font-display text-sm font-bold">
-            Agent Gate Mode (Notifications vs Auto-Run)
-          </h2>
-          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-            Decides if agents push Allow/Deny prompts to your phone or run automatically. Separate from laptop battery gears below.
-          </p>
+    <div className="space-y-4">
+      {/* 1. Agent Permission Mode */}
+      <section aria-label="Agent Permission Mode" className="surface-card p-3.5 space-y-2.5">
+        <div className="flex items-center gap-2">
+          <ShieldCheck
+            className="w-4 h-4 shrink-0"
+            style={{ color: "var(--accent-primary)" }}
+          />
+          <div>
+            <h2 className="font-display text-sm font-bold">
+              Agent Permission Mode
+            </h2>
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+              Choose whether Antigravity asks your phone before sensitive actions or runs automatically.
+            </p>
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-2">
           <button
@@ -205,7 +238,9 @@ export const HostTab: React.FC = () => {
             }
           >
             <span className="text-xs font-bold">Ask on Phone</span>
-            <span className="text-[11px] opacity-80">Push alerts to app</span>
+            <span className="text-[11px] opacity-80">
+              Approve or deny from banner
+            </span>
           </button>
           <button
             type="button"
@@ -217,40 +252,42 @@ export const HostTab: React.FC = () => {
             }
           >
             <span className="text-xs font-bold">Agent Turbo</span>
-            <span className="text-[11px] opacity-80">Auto-allow Tier 0–2</span>
+            <span className="text-[11px] opacity-80">
+              Auto-allow safe steps
+            </span>
           </button>
         </div>
       </section>
 
-      {/* 1. Interactive Backpack Power Governor */}
-      <section aria-label="Backpack Power Governor" className="surface-card p-3.5 space-y-3">
+      {/* 2. Backpack Laptop Power (5 Sticky Gears + Screen Off + Battery Slider) */}
+      <section aria-label="Backpack Laptop Power" className="surface-card p-3.5 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             {hostGlance?.acPluggedIn ? (
               <BatteryCharging
-                className="w-5 h-5"
+                className="w-5 h-5 shrink-0"
                 style={{ color: "var(--status-success)" }}
               />
             ) : (
               <Battery
-                className="w-5 h-5"
+                className="w-5 h-5 shrink-0"
                 style={{ color: "var(--status-warning)" }}
               />
             )}
-            <div>
+            <div className="min-w-0">
               <h2 className="font-display text-sm font-bold">
-                Laptop Hardware Power (CPU &amp; Battery Only)
+                Backpack Laptop Power
               </h2>
               <p className="text-xs tabular-nums" style={{ color: "var(--text-muted)" }}>
                 {hostGlance?.batteryPercent ?? "--"}% ·{" "}
-                {hostGlance?.acPluggedIn ? "AC Plugged" : "On Battery"}
+                {hostGlance?.acPluggedIn ? "Plugged In" : "On Battery"}
                 {hostGlance?.batteryRemainingMin
                   ? ` · ~${hostGlance.batteryRemainingMin}m left`
                   : ""}
                 {" · "}
                 {hostGlance?.autoGovernorEnabled
-                  ? "Auto-Scale ON"
-                  : "Locked Manually"}
+                  ? "Auto-Scale On"
+                  : "Manual Sticky Gear"}
               </p>
             </div>
           </div>
@@ -262,7 +299,7 @@ export const HostTab: React.FC = () => {
               onChange={(e) =>
                 void updatePowerGear({ autoGovernorEnabled: e.target.checked })
               }
-              className="h-4 w-4"
+              className="h-5 w-5"
             />
             <span className="font-semibold">Auto-Scale</span>
           </label>
@@ -288,29 +325,30 @@ export const HostTab: React.FC = () => {
                 }
               >
                 <span className="inline-flex items-center gap-1.5 text-xs font-bold">
-                  <Zap className="w-3.5 h-3.5" />
+                  <Zap className="w-3.5 h-3.5 shrink-0" />
                   {g.label}
                 </span>
                 <span className="text-[11px] opacity-80">{g.desc}</span>
               </button>
             );
           })}
+
           <button
             type="button"
             onClick={() => void updatePowerGear({ displayOff: true })}
             className="btn-secondary !flex-col !items-start !h-auto py-2.5 text-left"
           >
             <span className="inline-flex items-center gap-1.5 text-xs font-bold">
-              <MonitorOff className="w-3.5 h-3.5" />
-              Display Off
+              <MonitorOff className="w-3.5 h-3.5 shrink-0" />
+              Screen Off
             </span>
-            <span className="text-[11px] opacity-80">Lid-closed backpack</span>
+            <span className="text-[11px] opacity-80">Safe in backpack</span>
           </button>
         </div>
 
         <div className="surface-subtle p-3 space-y-2">
           <div className="flex items-center justify-between text-xs">
-            <span>Low-Battery Guard Threshold</span>
+            <span>Low Battery Guard Threshold</span>
             <span className="font-mono font-bold tabular-nums">
               {hostGlance?.lowBatteryThreshold ?? 15}%
             </span>
@@ -326,10 +364,10 @@ export const HostTab: React.FC = () => {
                 lowBatteryThreshold: Number(e.target.value),
               })
             }
-            className="w-full"
-            aria-label="Low-Battery Guard Threshold"
+            className="w-full min-h-[44px]"
+            aria-label="Low Battery Guard Threshold"
           />
-          <label className="flex items-center gap-2 text-xs cursor-pointer min-h-[36px]">
+          <label className="flex items-center gap-2 text-xs cursor-pointer min-h-[44px]">
             <input
               type="checkbox"
               checked={autoHibernate}
@@ -339,27 +377,133 @@ export const HostTab: React.FC = () => {
                   autoHibernateAtThreshold: e.target.checked,
                 });
               }}
-              className="h-4 w-4"
+              className="h-5 w-5"
             />
-            <span>Arm automatic hibernate at threshold (on DC battery)</span>
+            <span>Hibernate laptop automatically at battery threshold</span>
           </label>
         </div>
       </section>
 
-      {/* 2. Live Host Vitals */}
-      <section aria-label="Host Vitals" className="surface-card p-3.5 space-y-3">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <Activity
-              className="w-4 h-4"
+      {/* 3. Collapsible Antigravity Skills, Plugins & Rules Inspector */}
+      <section aria-label="Antigravity Customizations" className="surface-card overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setShowCustomizations((v) => !v)}
+          className="w-full min-h-[44px] px-3.5 py-3 flex items-center justify-between gap-2 text-left"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <Puzzle
+              className="w-4 h-4 shrink-0"
               style={{ color: "var(--accent-secondary)" }}
             />
-            <h2 className="font-display text-sm font-bold">
-              Host Vitals ({hostGlance?.hostname || "Windows 11 Host"})
+            <div className="min-w-0">
+              <div className="font-display text-sm font-bold truncate">
+                Antigravity Skills, Plugins &amp; Rules
+              </div>
+              <div className="text-xs" style={{ color: "var(--text-muted)" }}>
+                {custTotal} installed ({customizations?.plugins?.length || 0} plugins ·{" "}
+                {customizations?.skills?.length || 0} skills ·{" "}
+                {customizations?.rules?.length || 0} rules)
+              </div>
+            </div>
+          </div>
+          {showCustomizations ? (
+            <ChevronDown className="w-4 h-4 shrink-0" />
+          ) : (
+            <ChevronRight className="w-4 h-4 shrink-0" />
+          )}
+        </button>
+
+        {showCustomizations && (
+          <div
+            className="px-3.5 pb-3.5 pt-2 border-t space-y-3"
+            style={{ borderColor: "var(--border-default)" }}
+          >
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => void handleRefreshCustomizations()}
+                disabled={refreshingCust}
+                className="btn-secondary !min-h-[44px] !px-3 text-xs"
+              >
+                <RefreshCw
+                  className={`w-3.5 h-3.5 ${refreshingCust ? "animate-spin" : ""}`}
+                />
+                Refresh
+              </button>
+            </div>
+
+            {(
+              [
+                { key: "plugins", title: "Plugins", items: customizations?.plugins || [] },
+                { key: "skills", title: "Skills", items: customizations?.skills || [] },
+                { key: "rules", title: "Rules", items: customizations?.rules || [] },
+                {
+                  key: "slashCommands",
+                  title: "Slash Commands",
+                  items: customizations?.slashCommands || [],
+                },
+              ] as const
+            ).map((group) => (
+              <div key={group.key} className="space-y-1.5">
+                <div
+                  className="text-xs font-semibold uppercase tracking-wider"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  {group.title} ({group.items.length})
+                </div>
+                {group.items.length === 0 ? (
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    None detected.
+                  </p>
+                ) : (
+                  <div className="space-y-1">
+                    {group.items.map((item, idx) => {
+                      const info = renderCustomizationLabel(item);
+                      return (
+                        <div
+                          key={`${group.key}-${idx}`}
+                          className="surface-subtle px-2.5 py-2 text-xs space-y-0.5"
+                        >
+                          <div className="font-mono font-semibold break-words">
+                            {info.title}
+                          </div>
+                          {info.subtitle && (
+                            <div
+                              className="text-[11px] break-words"
+                              style={{ color: "var(--text-muted)" }}
+                            >
+                              {info.subtitle}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* 4. Laptop Vitals & Listening Dev Ports */}
+      <section aria-label="Laptop Vitals" className="surface-card p-3.5 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <Activity
+              className="w-4 h-4 shrink-0"
+              style={{ color: "var(--accent-secondary)" }}
+            />
+            <h2 className="font-display text-sm font-bold truncate">
+              Laptop Vitals ({hostGlance?.hostname || "Host"})
             </h2>
           </div>
-          <span className="text-[11px] font-mono" style={{ color: "var(--text-muted)" }}>
-            {hostGlance?.keepAwakeActive ? "Keep-Awake S0" : "Normal Sleep"}
+          <span
+            className="text-[11px] font-mono shrink-0"
+            style={{ color: "var(--text-muted)" }}
+          >
+            {hostGlance?.keepAwakeActive ? "Keep-Awake Active" : "Standard Sleep"}
           </span>
         </div>
 
@@ -403,14 +547,17 @@ export const HostTab: React.FC = () => {
             <div className="font-mono text-xs font-bold tabular-nums truncate">
               {hostGlance?.gpuName
                 ? `${hostGlance.gpuLoadPercent ?? 0}% · ${hostGlance.vramUsedMb ?? 0}MB`
-                : "No NVIDIA GPU"}
+                : "Integrated / None"}
             </div>
           </div>
         </div>
 
         {hostGlance && hostGlance.listeningPorts.length > 0 && (
-          <div className="space-y-1">
-            <div className="text-xs font-semibold" style={{ color: "var(--text-muted)" }}>
+          <div className="space-y-1.5">
+            <div
+              className="text-xs font-semibold"
+              style={{ color: "var(--text-muted)" }}
+            >
               Listening Dev Ports ({hostGlance.listeningPorts.length})
             </div>
             <div className="flex flex-wrap gap-1.5">
@@ -433,106 +580,21 @@ export const HostTab: React.FC = () => {
         )}
       </section>
 
-      {/* 3. Interactive Phone Terminal (pwsh) */}
-      <section aria-label="Phone Terminal" className="surface-card p-3.5 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <Terminal
-              className="w-4 h-4"
-              style={{ color: "var(--accent-primary)" }}
-            />
-            <h2 className="font-display text-sm font-bold">
-              Interactive Phone Terminal (pwsh)
-            </h2>
-          </div>
-          <div className="flex items-center gap-1.5">
-            {ptySessions.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => setActivePtyId(s.id)}
-                className={
-                  activePtyId === s.id
-                    ? "btn-primary !min-h-[44px] !px-2.5 text-xs font-mono"
-                    : "btn-secondary !min-h-[44px] !px-2.5 text-xs font-mono"
-                }
-              >
-                {s.id.slice(0, 8)}
-              </button>
-            ))}
-            <button
-              type="button"
-              onClick={() => void createPty()}
-              className="btn-secondary !min-h-[44px] !px-3 text-xs"
-            >
-              + New Shell
-            </button>
-          </div>
-        </div>
-
-        <pre
-          className="surface-subtle p-3 h-52 overflow-y-auto font-mono text-xs whitespace-pre-wrap break-all leading-relaxed"
-        >
-          {activePtyId
-            ? ptyOutputBySession[activePtyId] ||
-              "PowerShell session ready. Type a command or tap a preset below."
-            : "Tap '+ New Shell' to open a Job-Object protected pwsh terminal."}
-        </pre>
-
-        <div className="flex flex-wrap gap-1.5">
-          {TERMINAL_PRESETS.map((preset) => (
-            <button
-              key={preset.label}
-              type="button"
-              disabled={!activePtyId}
-              onClick={() =>
-                activePtyId && sendPtyInput(activePtyId, preset.cmd)
-              }
-              className="btn-secondary !min-h-[44px] !px-2.5 text-xs font-mono"
-            >
-              {preset.label}
-            </button>
-          ))}
-        </div>
-
-        <form onSubmit={handleSendTerminal} className="flex gap-2">
-          <input
-            type="text"
-            value={termInput}
-            onChange={(e) => setTermInput(e.target.value)}
-            placeholder={
-              activePtyId
-                ? "Enter PowerShell command..."
-                : "Create a shell first..."
-            }
-            disabled={!activePtyId}
-            className="flex-1 min-w-0 rounded-[var(--radius-inner)] border px-3 py-2 font-mono text-sm"
-            style={{
-              backgroundColor: "var(--bg-subtle)",
-              borderColor: "var(--border-default)",
-              color: "var(--text-primary)",
-            }}
-          />
-          <button
-            type="submit"
-            disabled={!activePtyId || !termInput.trim()}
-            className="btn-primary shrink-0 text-xs"
-          >
-            Run
-          </button>
-        </form>
-      </section>
-
-      {/* 4. Tunnel & QR Pairing */}
+      {/* 5. Cloudflare Tunnel, QR Pairing & PANIC Lock */}
       <section aria-label="Tunnel and Pairing" className="surface-card p-3.5 space-y-3">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <Radio
-              className="w-4 h-4"
-              style={{ color: "var(--accent-secondary)" }}
+              className="w-4 h-4 shrink-0"
+              style={{
+                color:
+                  tunnelStatus?.status === "running"
+                    ? "var(--status-success)"
+                    : "var(--accent-secondary)",
+              }}
             />
             <h2 className="font-display text-sm font-bold">
-              Hotspot Tunnel &amp; QR Pairing
+              Remote Tunnel &amp; Phone Pairing
             </h2>
           </div>
           <span className="font-mono text-xs" style={{ color: "var(--text-muted)" }}>
@@ -542,7 +604,7 @@ export const HostTab: React.FC = () => {
 
         <div className="flex items-center gap-2">
           <code
-            className="flex-1 min-w-0 truncate rounded-[var(--radius-inner)] border px-3 py-2 font-mono text-xs"
+            className="flex-1 min-w-0 truncate rounded-[var(--radius-inner)] border px-3 py-2.5 font-mono text-xs"
             style={{
               backgroundColor: "var(--bg-subtle)",
               borderColor: "var(--border-default)",
@@ -554,8 +616,8 @@ export const HostTab: React.FC = () => {
           <button
             type="button"
             onClick={() => void handleCopy("tunnel-url", publicUrl)}
-            className="btn-secondary !px-3 shrink-0"
-            aria-label="Copy public URL"
+            className="btn-secondary !min-h-[44px] !px-3 shrink-0"
+            aria-label="Copy tunnel URL"
           >
             {copiedId === "tunnel-url" ? (
               <Check className="w-4 h-4" />
@@ -570,7 +632,7 @@ export const HostTab: React.FC = () => {
             type="button"
             disabled={busyTunnel}
             onClick={() => void handleTunnelStart("cloudflare")}
-            className="btn-primary text-xs"
+            className="btn-primary !min-h-[44px] text-xs"
           >
             Cloudflare
           </button>
@@ -578,7 +640,7 @@ export const HostTab: React.FC = () => {
             type="button"
             disabled={busyTunnel}
             onClick={() => void handleTunnelStart("tailscale")}
-            className="btn-secondary text-xs"
+            className="btn-secondary !min-h-[44px] text-xs"
           >
             Tailscale
           </button>
@@ -586,7 +648,7 @@ export const HostTab: React.FC = () => {
             type="button"
             disabled={busyTunnel}
             onClick={() => void stopTunnel()}
-            className="btn-secondary text-xs"
+            className="btn-secondary !min-h-[44px] text-xs"
           >
             Local Only
           </button>
@@ -596,17 +658,17 @@ export const HostTab: React.FC = () => {
           <QrSvg
             value={qrTarget}
             svgHtml={pairingCode?.qrSvg || tunnelStatus?.qrSvg}
-            size={132}
-            label="0G Pairing QR Code"
+            size={128}
+            label="Zero-G Pairing QR Code"
           />
           <div className="flex-1 min-w-[180px] space-y-2">
             <button
               type="button"
               onClick={() => void generatePairingCode()}
-              className="btn-secondary w-full text-xs"
+              className="btn-secondary w-full !min-h-[44px] text-xs"
             >
               <KeyRound className="w-4 h-4" />
-              Generate 6-Digit Pairing Code
+              New 6-Digit Pairing Code
             </button>
             {pairingCode?.code && (
               <div
@@ -617,35 +679,36 @@ export const HostTab: React.FC = () => {
               </div>
             )}
             {tunnelStatus?.installHint && (
-              <p className="font-mono text-[11px] break-all" style={{ color: "var(--status-warning)" }}>
+              <p
+                className="font-mono text-[11px] break-all"
+                style={{ color: "var(--status-warning)" }}
+              >
                 {tunnelStatus.installHint}
               </p>
             )}
           </div>
         </div>
-      </section>
 
-      {/* 5. WebAuthn Passkey & Web Push Opt-In */}
-      <section aria-label="Security and Push" className="surface-card p-3.5 space-y-3">
-        <h2 className="font-display text-sm font-bold">
-          Passkey Step-Up &amp; Web Push Alerts
-        </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {/* Security & Push */}
+        <div
+          className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t"
+          style={{ borderColor: "var(--border-default)" }}
+        >
           <button
             type="button"
             onClick={() => void handleEnrollPasskey()}
-            className="btn-secondary text-xs"
+            className="btn-secondary !min-h-[44px] text-xs"
           >
             <Fingerprint className="w-4 h-4" />
-            Enroll WebAuthn Passkey
+            Enroll Passkey
           </button>
           <button
             type="button"
             onClick={() => void handleEnablePush()}
-            className="btn-secondary text-xs"
+            className="btn-secondary !min-h-[44px] text-xs"
           >
             <BellRing className="w-4 h-4" />
-            Enable Zero-Secret Web Push
+            Enable Phone Push Alerts
           </button>
         </div>
         {securityNotice && (
@@ -653,59 +716,49 @@ export const HostTab: React.FC = () => {
             {securityNotice}
           </p>
         )}
-      </section>
 
-      {/* 6. Multi-Provider Hook Setup Viewer */}
-      <section aria-label="Multi-Provider Hook Setup" className="surface-card p-3.5 space-y-3">
-        <h2 className="font-display text-sm font-bold">
-          Multi-Provider Hook Snippets
-        </h2>
-        {hookConfigs.length === 0 ? (
-          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-            Hook configs load when connected to the 0G daemon.
-          </p>
-        ) : (
-          <div className="space-y-2.5">
-            {hookConfigs.map((cfg) => {
-              const formatted =
-                typeof cfg.snippet === "string"
-                  ? cfg.snippet
-                  : JSON.stringify(cfg.snippet, null, 2);
-              return (
-                <div key={cfg.provider} className="surface-subtle p-3 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <ProviderBadge provider={cfg.provider} />
-                      <span
-                        className="font-mono text-[11px] truncate"
-                        style={{ color: "var(--text-muted)" }}
-                      >
-                        {cfg.configPath}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        void handleCopy(`hook-${cfg.provider}`, formatted)
-                      }
-                      className="btn-secondary !min-h-[44px] !px-2.5 text-xs shrink-0"
-                    >
-                      {copiedId === `hook-${cfg.provider}` ? (
-                        <Check className="w-3.5 h-3.5" />
-                      ) : (
-                        <Copy className="w-3.5 h-3.5" />
-                      )}
-                      Copy
-                    </button>
-                  </div>
-                  <pre className="font-mono text-[11px] overflow-x-auto max-h-40 leading-relaxed">
-                    {formatted}
-                  </pre>
-                </div>
-              );
-            })}
-          </div>
-        )}
+        {/* PANIC Lock */}
+        <div
+          className="pt-2 border-t"
+          style={{ borderColor: "var(--border-default)" }}
+        >
+          {!isLocked ? (
+            <button
+              type="button"
+              disabled={busyPanic}
+              onClick={async () => {
+                setBusyPanic(true);
+                try {
+                  await panicLock(false);
+                } finally {
+                  setBusyPanic(false);
+                }
+              }}
+              className="btn-danger w-full !min-h-[44px] font-bold text-xs"
+            >
+              <ShieldAlert className="w-4 h-4" />
+              PANIC — Lock Laptop Hooks &amp; Stop Running Jobs
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={busyPanic}
+              onClick={async () => {
+                setBusyPanic(true);
+                try {
+                  await unlockHost();
+                } finally {
+                  setBusyPanic(false);
+                }
+              }}
+              className="btn-primary w-full !min-h-[44px] font-bold text-xs"
+            >
+              <Unlock className="w-4 h-4" />
+              <Lock className="w-4 h-4" />
+              HOST LOCKED — Reset &amp; Unlock Laptop
+            </button>
+          )}
+        </div>
       </section>
     </div>
   );

@@ -34,7 +34,8 @@ export const AuxPaneView: React.FC = () => {
     pairingCode,
     generatePairingCode,
     approvals,
-    mobileTools,
+    agyConversations,
+    agyProjects,
     agentGateMode,
     setAgentGateMode,
     updatePowerGear,
@@ -101,7 +102,7 @@ export const AuxPaneView: React.FC = () => {
           <button
             type="button"
             onClick={() => void refreshAll()}
-            className="btn-secondary !min-h-[36px] !px-2.5 text-xs shrink-0"
+            className="btn-secondary !min-h-[44px] !px-2.5 text-xs shrink-0"
           >
             Retry
           </button>
@@ -307,18 +308,18 @@ export const AuxPaneView: React.FC = () => {
         </button>
       </section>
 
-      {/* 3. Pending Approvals & Mobile Tools Summary */}
+      {/* 3. Antigravity Chats & Workspaces Summary */}
       <section className="surface-card p-3.5 grid grid-cols-2 gap-2.5">
         <a
-          href="/?tab=inbox"
+          href="/?tab=chat"
           target="_blank"
           rel="noreferrer"
-          className="surface-subtle p-3 flex flex-col justify-between gap-1 no-underline"
+          className="surface-subtle p-3 min-h-[44px] flex flex-col justify-between gap-1 no-underline"
           style={{ color: "var(--text-primary)" }}
         >
           <div className="flex items-center justify-between">
             <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-              Pending Holds
+              {pendingApprovals.length > 0 ? "Pending Holds" : "Active Chats"}
             </span>
             <ExternalLink className="w-3.5 h-3.5" style={{ color: "var(--text-muted)" }} />
           </div>
@@ -331,26 +332,28 @@ export const AuxPaneView: React.FC = () => {
                   : "var(--text-primary)",
             }}
           >
-            {pendingApprovals.length}
+            {pendingApprovals.length > 0
+              ? pendingApprovals.length
+              : agyConversations.length}
           </div>
         </a>
 
         <a
-          href="/?tab=tools"
+          href="/?tab=projects"
           target="_blank"
           rel="noreferrer"
-          className="surface-subtle p-3 flex flex-col justify-between gap-1 no-underline"
+          className="surface-subtle p-3 min-h-[44px] flex flex-col justify-between gap-1 no-underline"
           style={{ color: "var(--text-primary)" }}
         >
           <div className="flex items-center justify-between">
             <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-              Phone MCP Tools
+              Workspaces
             </span>
             <Wrench className="w-3.5 h-3.5" style={{ color: "var(--accent-secondary)" }} />
           </div>
           <div className="font-display text-2xl font-bold tabular-nums flex items-center gap-1.5">
             <Smartphone className="w-4 h-4" style={{ color: "var(--accent-primary)" }} />
-            {mobileTools.filter((t) => t.enabled).length}
+            {agyProjects.length}
           </div>
         </a>
       </section>

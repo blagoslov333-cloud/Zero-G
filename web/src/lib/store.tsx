@@ -11,6 +11,13 @@ import type {
   ActiveMobilePrompt,
   ActiveTab,
   AgentGateMode,
+  AgyConversationDetail,
+  AgyConversationSummary,
+  AgyCreateConversationRequest,
+  AgyCreateConversationResponse,
+  AgyCustomizationsResponse,
+  AgyProject,
+  AgySendMessageResponse,
   ApprovalDecisionRequest,
   ApprovalItem,
   ArtifactItem,
@@ -56,18 +63,18 @@ import { wsClient, type WsConnectionStatus } from "./ws";
 const THEME_KEY = "0g_theme_preset";
 
 function parseInitialTab(): ActiveTab {
-  if (typeof window === "undefined") return "projects";
+  if (typeof window === "undefined") return "chat";
   const tab = new URLSearchParams(window.location.search).get("tab");
   if (
+    tab === "chat" ||
     tab === "projects" ||
-    tab === "inbox" ||
-    tab === "new" ||
-    tab === "tools" ||
-    tab === "host"
+    tab === "terminal" ||
+    tab === "laptop"
   ) {
     return tab;
   }
-  return "projects";
+  if (tab === "host" || tab === "tools") return "laptop";
+  return "chat";
 }
 
 function parseAuxPaneFlag(): boolean {
@@ -160,6 +167,33 @@ export interface ZeroGStoreValue {
   dismissNotifyCard: (id: string) => void;
   pushNotifyCard: (card: NotifyCardItem) => void;
   openPromptModal: (prompt: ActiveMobilePrompt) => void;
+
+  // Antigravity Desktop Bridge (/api/agy/*)
+  agyProjects: AgyProject[];
+  agyConversations: AgyConversationSummary[];
+  activeConversationId: string | null;
+  setActiveConversationId: (id: string | null) => void;
+  activeConversationDetail: AgyConversationDetail | null;
+  agyConversationLoading: boolean;
+  agyError: string | null;
+  selectedProjectPath: string | null;
+  setSelectedProjectPath: (path: string | null) => void;
+  customizations: AgyCustomizationsResponse | null;
+  composerDraft: string;
+  setComposerDraft: React.Dispatch<React.SetStateAction<string>>;
+  pendingNewChatOpen: boolean;
+  setPendingNewChatOpen: (open: boolean) => void;
+  terminalCwd: string | null;
+  setTerminalCwd: (cwd: string | null) => void;
+  refreshAgyData: () => Promise<void>;
+  loadAgyConversationDetail: (conversationId: string) => Promise<void>;
+  startNewAgyConversation: (
+    req: AgyCreateConversationRequest
+  ) => Promise<AgyCreateConversationResponse>;
+  sendAgyChatMessage: (
+    conversationId: string,
+    message: string
+  ) => Promise<AgySendMessageResponse>;
 }
 
 const ZeroGStoreContext = createContext<ZeroGStoreValue | null>(null);
@@ -208,6 +242,23 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
   const [activeMobilePrompt, setActiveMobilePrompt] =
     useState<ActiveMobilePrompt | null>(null);
   const [notifyCards, setNotifyCards] = useState<NotifyCardItem[]>([]);
+
+  // Antigravity Desktop Bridge (/api/agy/*) state
+  const [agyProjects, setAgyProjects] = useState<AgyProject[]>([]);
+  const [agyConversations, setAgyConversations] = useState<AgyConversationSummary[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [activeConversationDetail, setActiveConversationDetail] =
+    useState<AgyConversationDetail | null>(null);
+  const [agyConversationLoading, setAgyConversationLoading] = useState<boolean>(false);
+  const [agyError, setAgyError] = useState<string | null>(null);
+  const [selectedProjectPath, setSelectedProjectPath] = useState<string | null>(null);
+  const [customizations, setCustomizations] =
+    useState<AgyCustomizationsResponse | null>(null);
+  const [composerDraft, setComposerDraft] = useState<string>("");
+  const [pendingNewChatOpen, setPendingNewChatOpen] = useState<boolean>(false);
+  const [terminalCwd, setTerminalCwd] = useState<string | null>(null);
+  const [pollBoostTick, setPollBoostTick] = useState<number>(0);
+  const boostPollUntilRef = useRef<number>(0);
 
   const handledTicketsRef = useRef<Set<string>>(new Set());
   const mobileToolsRef = useRef<MobileToolSpec[]>([]);
@@ -296,6 +347,7 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
   const refreshAll = useCallback(async () => {
     setLoading(true);
     setApiError(null);
+    setAgyError(null);
     try {
       const [
         projRes,
@@ -309,6 +361,9 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         tunnelRes,
         hookRes,
         ptyRes,
+        agyProjRes,
+        agyConvRes,
+        agyCustRes,
       ] = await Promise.allSettled([
         api.getProjects(),
         api.getSessions(),
@@ -321,6 +376,9 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         api.getTunnelStatus(),
         api.getHookConfigs(),
         api.listPtySessions(),
+        api.getAgyProjects(),
+        api.getAgyConversations({ includeSubagents: false, limit: 60 }),
+        api.getAgyCustomizations(),
       ]);
 
       const checkAuthErr = (r: PromiseSettledResult<unknown>) =>
@@ -331,7 +389,9 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       if (
         checkAuthErr(projRes) ||
         checkAuthErr(sessRes) ||
-        checkAuthErr(glanceRes)
+        checkAuthErr(glanceRes) ||
+        checkAuthErr(agyProjRes) ||
+        checkAuthErr(agyConvRes)
       ) {
         if (!isLocalhostOrigin()) {
           setPairingRequired(true);
@@ -372,10 +432,32 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         }
       }
 
+      if (agyProjRes.status === "fulfilled") {
+        setAgyProjects(agyProjRes.value);
+        setTerminalCwd((prev) => prev || agyProjRes.value[0]?.path || null);
+      }
+      if (agyConvRes.status === "fulfilled") {
+        setAgyConversations(agyConvRes.value);
+        setActiveConversationId((prev) => {
+          if (prev && agyConvRes.value.some((c) => c.id === prev)) return prev;
+          return agyConvRes.value[0]?.id || prev || null;
+        });
+      } else if (agyConvRes.status === "rejected") {
+        setAgyError(
+          agyConvRes.reason instanceof Error
+            ? agyConvRes.reason.message
+            : "Failed to load Antigravity conversations"
+        );
+      }
+      if (agyCustRes.status === "fulfilled") {
+        setCustomizations(agyCustRes.value);
+      }
+
       const allFailed =
         projRes.status === "rejected" &&
         sessRes.status === "rejected" &&
-        glanceRes.status === "rejected";
+        glanceRes.status === "rejected" &&
+        agyConvRes.status === "rejected";
       if (allFailed) {
         const msg =
           projRes.reason instanceof Error
@@ -389,6 +471,148 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       setLoading(false);
     }
   }, []);
+
+  const refreshAgyData = useCallback(async () => {
+    setAgyError(null);
+    const [projRes, convRes, custRes] = await Promise.allSettled([
+      api.getAgyProjects(),
+      api.getAgyConversations({ includeSubagents: false, limit: 60 }),
+      api.getAgyCustomizations(),
+    ]);
+    if (projRes.status === "fulfilled") {
+      setAgyProjects(projRes.value);
+      setTerminalCwd((prev) => prev || projRes.value[0]?.path || null);
+    }
+    if (convRes.status === "fulfilled") {
+      setAgyConversations(convRes.value);
+      setActiveConversationId((prev) => {
+        if (prev && convRes.value.some((c) => c.id === prev)) return prev;
+        return convRes.value[0]?.id || prev || null;
+      });
+    } else {
+      setAgyError(
+        convRes.reason instanceof Error
+          ? convRes.reason.message
+          : "Failed to refresh Antigravity conversations"
+      );
+    }
+    if (custRes.status === "fulfilled") {
+      setCustomizations(custRes.value);
+    }
+  }, []);
+
+  const loadAgyConversationDetail = useCallback(async (conversationId: string) => {
+    if (!conversationId) return;
+    try {
+      const detail = await api.getAgyConversationDetail(conversationId, 150);
+      setActiveConversationDetail(detail);
+      setAgyError(null);
+    } catch (err) {
+      setAgyError(
+        err instanceof Error ? err.message : "Failed to load conversation transcript"
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!activeConversationId) {
+      setActiveConversationDetail(null);
+      return;
+    }
+    let cancelled = false;
+    setAgyConversationLoading(true);
+    void api
+      .getAgyConversationDetail(activeConversationId, 150)
+      .then((detail) => {
+        if (!cancelled) {
+          setActiveConversationDetail(detail);
+          setAgyError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setAgyError(
+            err instanceof Error ? err.message : "Failed to load conversation transcript"
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAgyConversationLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeConversationId]);
+
+  const activeConvStatusFromList = useMemo(() => {
+    if (!activeConversationId) return undefined;
+    return agyConversations.find((c) => c.id === activeConversationId)?.status;
+  }, [agyConversations, activeConversationId]);
+
+  useEffect(() => {
+    if (!activeConversationId) return;
+    const isRunning =
+      activeConversationDetail?.conversation?.status === "running" ||
+      activeConvStatusFromList === "running";
+    const inBoostWindow = Date.now() < boostPollUntilRef.current;
+    if (!isRunning && !inBoostWindow) return;
+
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      const stillRunning =
+        activeConversationDetail?.conversation?.status === "running" ||
+        activeConvStatusFromList === "running";
+      if (!stillRunning && Date.now() >= boostPollUntilRef.current) {
+        return;
+      }
+      void loadAgyConversationDetail(activeConversationId);
+      void api
+        .getAgyConversations({ includeSubagents: false, limit: 60 })
+        .then(setAgyConversations)
+        .catch(() => {});
+    }, 3000);
+
+    return () => window.clearInterval(timer);
+  }, [
+    activeConversationId,
+    activeConversationDetail?.conversation?.status,
+    activeConvStatusFromList,
+    pollBoostTick,
+    loadAgyConversationDetail,
+  ]);
+
+  const startNewAgyConversation = useCallback(
+    async (req: AgyCreateConversationRequest) => {
+      const res = await api.createAgyConversation(req);
+      boostPollUntilRef.current = Date.now() + 30000;
+      setPollBoostTick((t) => t + 1);
+      if (res.conversationId) {
+        setActiveConversationId(res.conversationId);
+        void loadAgyConversationDetail(res.conversationId);
+      }
+      void api
+        .getAgyConversations({ includeSubagents: false, limit: 60 })
+        .then(setAgyConversations)
+        .catch(() => {});
+      return res;
+    },
+    [loadAgyConversationDetail]
+  );
+
+  const sendAgyChatMessage = useCallback(
+    async (conversationId: string, message: string) => {
+      const res = await api.sendAgyMessage(conversationId, message);
+      boostPollUntilRef.current = Date.now() + 30000;
+      setPollBoostTick((t) => t + 1);
+      void loadAgyConversationDetail(conversationId);
+      void api
+        .getAgyConversations({ includeSubagents: false, limit: 60 })
+        .then(setAgyConversations)
+        .catch(() => {});
+      return res;
+    },
+    [loadAgyConversationDetail]
+  );
 
   const loadSessionTimeline = useCallback(async (sessionId: string) => {
     try {
@@ -626,6 +850,10 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     const pollTimer = window.setInterval(() => {
       if (document.visibilityState === "visible") {
         void api.getHostGlance().then(setHostGlance).catch(() => {});
+        void api
+          .getAgyConversations({ includeSubagents: false, limit: 60 })
+          .then(setAgyConversations)
+          .catch(() => {});
       }
     }, 10000);
 
@@ -919,6 +1147,26 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       dismissNotifyCard,
       pushNotifyCard,
       openPromptModal,
+      agyProjects,
+      agyConversations,
+      activeConversationId,
+      setActiveConversationId,
+      activeConversationDetail,
+      agyConversationLoading,
+      agyError,
+      selectedProjectPath,
+      setSelectedProjectPath,
+      customizations,
+      composerDraft,
+      setComposerDraft,
+      pendingNewChatOpen,
+      setPendingNewChatOpen,
+      terminalCwd,
+      setTerminalCwd,
+      refreshAgyData,
+      loadAgyConversationDetail,
+      startNewAgyConversation,
+      sendAgyChatMessage,
     }),
     [
       theme,
@@ -981,6 +1229,21 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       dismissNotifyCard,
       pushNotifyCard,
       openPromptModal,
+      agyProjects,
+      agyConversations,
+      activeConversationId,
+      activeConversationDetail,
+      agyConversationLoading,
+      agyError,
+      selectedProjectPath,
+      customizations,
+      composerDraft,
+      pendingNewChatOpen,
+      terminalCwd,
+      refreshAgyData,
+      loadAgyConversationDetail,
+      startNewAgyConversation,
+      sendAgyChatMessage,
     ]
   );
 

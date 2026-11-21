@@ -807,3 +807,353 @@ def test_windows_host_modules_and_audit_chain(tmp_path: Path) -> None:
         conn.execute("UPDATE audit_log SET action = 'tampered' WHERE id = 1")
     assert db.verify_audit_chain() is False
     db.close()
+
+
+# ---------------------------------------------------------------------------
+# 8. Antigravity Desktop Bridge & /api/agy/* Endpoints
+# ---------------------------------------------------------------------------
+
+
+def test_antigravity_desktop_bridge_endpoints(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import sqlite3
+    import urllib.parse
+
+    agy_dir = tmp_path / "agy"
+    cfg_dir = tmp_path / "cfg"
+    scratch_root = tmp_path / "scratch"
+    proj_dir = scratch_root / "alpha-app"
+    (proj_dir / "src").mkdir(parents=True)
+    (proj_dir / "node_modules" / "pkg").mkdir(parents=True)
+    (proj_dir / "node_modules" / "pkg" / "index.js").write_text("console.log(1)\n", encoding="utf-8")
+    (proj_dir / "src" / "main.py").write_text(
+        'TOKEN = "sk-proj-abc12345678901234567890123456"\nprint("hello")\n',
+        encoding="utf-8",
+    )
+    (proj_dir / ".env").write_text("SECRET_KEY=topsecret123\n", encoding="utf-8")
+
+    # Initialize git repo so gitBranch & dirtyCount are real
+    subprocess.run(["git", "init"], cwd=proj_dir, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@0g.local"], cwd=proj_dir, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "0G Test"], cwd=proj_dir, check=True, capture_output=True)
+    subprocess.run(["git", "add", "src/main.py"], cwd=proj_dir, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=proj_dir, check=True, capture_output=True)
+
+    # Customizations
+    (cfg_dir / "plugins" / "0g").mkdir(parents=True)
+    (cfg_dir / "plugins" / "0g" / "plugin.json").write_text(
+        json.dumps({"name": "0g", "displayName": "0G", "description": "Mobile remote"}),
+        encoding="utf-8",
+    )
+    (cfg_dir / "skills" / "custom-skill").mkdir(parents=True)
+    (cfg_dir / "skills" / "custom-skill" / "SKILL.md").write_text(
+        "---\nname: custom-skill\ndescription: Custom user skill\n---\nBody\n",
+        encoding="utf-8",
+    )
+    (agy_dir / "builtin" / "skills" / "builtin-skill").mkdir(parents=True)
+    (agy_dir / "builtin" / "skills" / "builtin-skill" / "SKILL.md").write_text(
+        "---\nname: builtin-skill\ndescription: Builtin skill\n---\nBody\n",
+        encoding="utf-8",
+    )
+    (cfg_dir / "rules").mkdir(parents=True)
+    (cfg_dir / "rules" / "AGENTS.md").write_text("# Rules\n", encoding="utf-8")
+
+    # Brain directory + transcript + swarm plan + artifacts
+    conv_id = "conv-main-1"
+    sub_id = "conv-sub-1"
+    conv_brain = agy_dir / "brain" / conv_id
+    logs_dir = conv_brain / ".system_generated" / "logs"
+    swarm_dir = conv_brain / ".system_generated" / "swarm"
+    logs_dir.mkdir(parents=True)
+    swarm_dir.mkdir(parents=True)
+    (agy_dir / "brain" / sub_id / ".system_generated" / "logs").mkdir(parents=True)
+
+    (swarm_dir / "plan.json").write_text(
+        json.dumps({"goal": {"title": "Alpha Swarm"}, "tasks": {"worker": "Implement"}}),
+        encoding="utf-8",
+    )
+    (conv_brain / "report.md").write_text("# Report\nAll clear.\n", encoding="utf-8")
+    tiny_png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+    (conv_brain / "diagram.png").write_bytes(tiny_png)
+    (conv_brain / ".system_generated" / "internal.txt").write_text("hidden", encoding="utf-8")
+
+    transcript_rows = [
+        {"step_index": 0, "source": "SYSTEM_SDK", "type": "USER_INPUT", "content": "sdk noise", "created_at": "2026-11-21T10:00:00Z"},
+        {"step_index": 1, "source": "SYSTEM", "type": "EPHEMERAL_MESSAGE", "content": "ephemeral noise", "created_at": "2026-11-21T10:00:01Z"},
+        {"step_index": 2, "source": "SYSTEM", "type": "SYSTEM_MESSAGE", "content": "system noise", "created_at": "2026-11-21T10:00:02Z"},
+        {
+            "step_index": 3,
+            "source": "USER_EXPLICIT",
+            "type": "USER_INPUT",
+            "content": "<USER_REQUEST>\nFix the router\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nTime: now\n</ADDITIONAL_METADATA>\n<CONTEXT_SUMMARY>old</CONTEXT_SUMMARY>",
+            "created_at": "2026-11-21T10:00:03Z",
+        },
+        {
+            "step_index": 4,
+            "source": "MODEL",
+            "type": "PLANNER_RESPONSE",
+            "model": "gemini-4-hydrogen-high",
+            "thinking": "Checking main.py",
+            "content": "Truncated...",
+            "truncated_fields": ["content"],
+            "tool_calls": [{"name": "read_file", "args": {"Path": "src/main.py"}}],
+            "created_at": "2026-11-21T10:00:04Z",
+        },
+        {
+            "step_index": 5,
+            "source": "MODEL",
+            "type": "GENERIC",
+            "content": "Created At: 2026-11-21T10:00:04Z\nShowing lines 1-2\nprint(\"hello\")",
+            "created_at": "2026-11-21T10:00:05Z",
+        },
+        {
+            "step_index": 6,
+            "source": "USER_EXPLICIT",
+            "type": "USER_INPUT",
+            "content": '<talker_agent_context>\n[2026-11-21T10:00:06Z] user: "Continue via talker"\n</talker_agent_context>',
+            "created_at": "2026-11-21T10:00:06Z",
+        },
+    ]
+    (logs_dir / "transcript.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in transcript_rows) + "\n",
+        encoding="utf-8",
+    )
+    full_row = dict(transcript_rows[4], content="Resolved full assistant response", truncated_fields=[])
+    (logs_dir / "transcript_full.jsonl").write_text(json.dumps(full_row) + "\n", encoding="utf-8")
+
+    # Build conversation_summaries.db with file:///c%3A/... URI encoding
+    posix_proj = proj_dir.resolve().as_posix()
+    if not posix_proj.startswith("/"):
+        posix_proj = "/" + posix_proj
+    encoded_uri = "file://" + urllib.parse.quote(posix_proj, safe="/")
+    db_file = agy_dir / "conversation_summaries.db"
+    con = sqlite3.connect(db_file)
+    con.execute(
+        """
+        CREATE TABLE conversation_summaries (
+            conversation_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL DEFAULT '',
+            preview TEXT NOT NULL DEFAULT '',
+            step_count INTEGER NOT NULL DEFAULT 0,
+            last_modified_time TEXT NOT NULL,
+            workspace_uris TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT '',
+            source TEXT NOT NULL DEFAULT '',
+            project_id TEXT NOT NULL DEFAULT '',
+            agent_name TEXT NOT NULL DEFAULT '',
+            parent_conversation_id TEXT NOT NULL DEFAULT '',
+            not_fully_idle INTEGER NOT NULL DEFAULT 0,
+            killed INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+    con.execute(
+        "CREATE VIRTUAL TABLE conversations_fts USING fts5(conversation_id UNINDEXED, chunk_index UNINDEXED, title, workspace, project, user_body, agent_body)"
+    )
+    con.execute("CREATE TABLE conversation_parents (conversation_id TEXT PRIMARY KEY, parent_id TEXT NOT NULL)")
+    con.execute(
+        "INSERT INTO conversation_summaries VALUES (?, ?, '', ?, ?, ?, ?, '', 'p1', '', '', 0, 0)",
+        (conv_id, "", 7, "2026-11-21 10:00:06.1234567+00:00", json.dumps([encoded_uri]), "CASCADE_RUN_STATUS_IDLE"),
+    )
+    con.execute(
+        "INSERT INTO conversation_summaries VALUES (?, ?, '', ?, ?, ?, ?, '', 'p1', 'verifier', ?, 0, 0)",
+        (sub_id, "Verify Alpha", 2, "2026-11-21 10:00:05.0000000+00:00", json.dumps([encoded_uri]), "CASCADE_RUN_STATUS_IDLE", conv_id),
+    )
+    con.execute(
+        "INSERT INTO conversations_fts(conversation_id, chunk_index, title, workspace, project, user_body, agent_body) VALUES (?, -1, ?, ?, ?, '', '')",
+        (conv_id, "Alpha App Refactor", "alpha-app", "alpha-app"),
+    )
+    con.commit()
+    con.close()
+
+    # Mock agentapi script
+    mock_agentapi = tmp_path / "mock_agentapi.py"
+    mock_log = tmp_path / "agentapi_calls.json"
+    mock_agentapi.write_text(
+        f"""import json, sys
+from pathlib import Path
+log_p = Path({str(mock_log)!r})
+calls = json.loads(log_p.read_text(encoding='utf-8')) if log_p.is_file() else []
+calls.append(sys.argv[1:])
+log_p.write_text(json.dumps(calls), encoding='utf-8')
+if sys.argv[1] == "new-conversation":
+    print(json.dumps({{"conversationId": "11111111-2222-3333-4444-555555555555"}}))
+else:
+    print("sent")
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("ZEROG_AGY_DIR", str(agy_dir))
+    monkeypatch.setenv("ZEROG_AGY_CONFIG_DIR", str(cfg_dir))
+    monkeypatch.setenv("ZEROG_PROJECT_ROOTS", str(scratch_root))
+    monkeypatch.setenv("ZEROG_AGENTAPI_BIN", str(mock_agentapi))
+
+    data_dir = tmp_path / "0g_data"
+    app = create_app(data_dir=data_dir)
+    with TestClient(app) as client:
+        # 1. /api/projects has zero fake Video production demo & /api/agy/projects returns real alpha-app
+        r_legacy_proj = client.get("/api/projects")
+        assert r_legacy_proj.status_code == 200
+        legacy_projs = r_legacy_proj.json()
+        assert all(not p.get("isSeededDemo") for p in legacy_projs)
+        assert all(p["name"].lower() != "video production" for p in legacy_projs)
+        assert any(p["name"] == "alpha-app" for p in legacy_projs)
+
+        r_agy_proj = client.get("/api/agy/projects")
+        assert r_agy_proj.status_code == 200
+        agy_projs = r_agy_proj.json()["projects"]
+        assert len(agy_projs) == 1
+        alpha = agy_projs[0]
+        assert alpha["name"] == "alpha-app"
+        assert alpha["gitBranch"] is not None
+        assert alpha["dirtyCount"] >= 1
+        assert alpha["conversationCount"] == 1
+
+        # 2. /api/agy/conversations (FTS title resolution + subagent filtering)
+        r_convs = client.get("/api/agy/conversations", params={"projectPath": alpha["path"]})
+        assert r_convs.status_code == 200
+        convs = r_convs.json()["conversations"]
+        assert len(convs) == 1
+        assert convs[0]["id"] == conv_id
+        assert convs[0]["title"] == "Alpha App Refactor"
+        assert convs[0]["subagentCount"] == 1
+        assert convs[0]["hasSwarm"] is True
+
+        r_convs_all = client.get("/api/agy/conversations", params={"includeSubagents": "true"})
+        assert r_convs_all.status_code == 200
+        assert {c["id"] for c in r_convs_all.json()["conversations"]} == {conv_id, sub_id}
+
+        # 3. /api/agy/conversations/{id} (transcript cleaning, full row resolution, GENERIC preview, swarmPlan)
+        r_detail = client.get(f"/api/agy/conversations/{conv_id}")
+        assert r_detail.status_code == 200
+        detail = r_detail.json()
+        assert detail["swarmPlan"]["goal"]["title"] == "Alpha Swarm"
+        assert len(detail["subagents"]) == 1
+        assert detail["subagents"][0]["id"] == sub_id
+
+        msgs = detail["messages"]
+        assert len(msgs) == 3
+        assert msgs[0]["role"] == "user"
+        assert msgs[0]["content"] == "Fix the router"
+        assert "ADDITIONAL_METADATA" not in msgs[0]["content"]
+        assert msgs[1]["role"] == "assistant"
+        assert msgs[1]["content"] == "Resolved full assistant response"
+        assert msgs[1]["thinking"] == "Checking main.py"
+        assert msgs[1]["toolCalls"][0]["outputPreview"] is not None
+        assert 'print("hello")' in msgs[1]["toolCalls"][0]["outputPreview"]
+        assert msgs[2]["role"] == "user"
+        assert msgs[2]["content"] == "Continue via talker"
+
+        art_paths = {a["relativePath"] for a in detail["artifacts"]}
+        assert art_paths == {"report.md", "diagram.png"}
+
+        assert client.get("/api/agy/conversations/bad$id").status_code == 400
+
+        # 4. /api/agy/conversations/{id}/artifact
+        r_art_md = client.get(f"/api/agy/conversations/{conv_id}/artifact", params={"path": "report.md"})
+        assert r_art_md.status_code == 200
+        assert r_art_md.json()["kind"] == "markdown"
+        assert "All clear." in r_art_md.json()["content"]
+
+        r_art_img = client.get(f"/api/agy/conversations/{conv_id}/artifact", params={"path": "diagram.png"})
+        assert r_art_img.status_code == 200
+        assert r_art_img.json()["kind"] == "image"
+        assert r_art_img.json()["dataUri"].startswith("data:image/png;base64,")
+
+        assert client.get(
+            f"/api/agy/conversations/{conv_id}/artifact",
+            params={"path": "../../outside.txt"},
+        ).status_code in (400, 403)
+
+        # 5. /api/agy/files/list & /api/agy/files/read
+        r_flist = client.get("/api/agy/files/list", params={"projectPath": alpha["path"]})
+        assert r_flist.status_code == 200
+        names = {e["name"] for e in r_flist.json()["entries"]}
+        assert "src" in names
+        assert "node_modules" not in names
+        assert ".git" not in names
+
+        r_fread = client.get("/api/agy/files/read", params={"projectPath": alpha["path"], "path": "src/main.py"})
+        assert r_fread.status_code == 200
+        fread_data = r_fread.json()
+        assert "sk-proj-abc" not in fread_data["content"]
+        assert "[REDACTED:" in fread_data["content"]
+        assert 'print("hello")' in fread_data["content"]
+
+        # Secret files & traversal blocked
+        assert client.get(
+            "/api/agy/files/read",
+            params={"projectPath": alpha["path"], "path": ".env"},
+        ).status_code == 403
+        assert client.get(
+            "/api/agy/files/read",
+            params={"projectPath": alpha["path"], "path": "../../outside.txt"},
+        ).status_code in (400, 403)
+
+        # 6. /api/agy/customizations
+        r_cust = client.get("/api/agy/customizations")
+        assert r_cust.status_code == 200
+        cust = r_cust.json()
+        assert any(p["name"] == "0G" for p in cust["plugins"])
+        assert any(s["name"] == "custom-skill" and s["source"] == "config" for s in cust["skills"])
+        assert any(s["name"] == "builtin-skill" and s["source"] == "builtin" for s in cust["skills"])
+        assert any(r["name"] == "AGENTS.md" for r in cust["rules"])
+        assert len(cust["slashCommands"]) == 9
+
+        # 7. /api/agy/conversations/new & /api/agy/conversations/{id}/message
+        r_new = client.post(
+            "/api/agy/conversations/new",
+            json={
+                "prompt": "Add unit tests",
+                "title": "Unit Test Sprint",
+                "model": "gemini-4-hydrogen-high",
+                "workspacePath": alpha["path"],
+            },
+        )
+        assert r_new.status_code == 200
+        new_data = r_new.json()
+        assert new_data["ok"] is True
+        assert new_data["deliveredVia"] == "agentapi"
+        assert new_data["conversationId"] == "11111111-2222-3333-4444-555555555555"
+
+        r_msg = client.post(
+            f"/api/agy/conversations/{conv_id}/message",
+            json={"message": "Check coverage"},
+        )
+        assert r_msg.status_code == 200
+        assert r_msg.json()["ok"] is True
+        assert r_msg.json()["deliveredVia"] == "agentapi"
+
+        recorded_calls = json.loads(mock_log.read_text(encoding="utf-8"))
+        assert recorded_calls[0][0] == "new-conversation"
+        assert "--title=Unit Test Sprint" in recorded_calls[0]
+        assert "--model=gemini-4-hydrogen-high" in recorded_calls[0]
+        assert f"[Active Workspace: {alpha['path']}]" in recorded_calls[0][-1]
+        assert recorded_calls[1] == ["send-message", conv_id, "Check coverage"]
+
+        # 8. /api/agy/terminal/exec + Tier-3 block + PANIC 423 lock
+        r_term = client.post(
+            "/api/agy/terminal/exec",
+            json={"command": "echo AGY_TERM_OK", "cwd": alpha["path"]},
+        )
+        assert r_term.status_code == 200
+        term_data = r_term.json()
+        assert term_data["ok"] is True
+        assert term_data["returncode"] == 0
+        assert "AGY_TERM_OK" in term_data["stdout"]
+
+        r_term_bad = client.post(
+            "/api/agy/terminal/exec",
+            json={"command": "rm -rf /", "cwd": alpha["path"]},
+        )
+        assert r_term_bad.status_code == 403
+
+        # PANIC lock blocks new conversation, send message, and terminal exec with 423
+        assert client.post("/api/panic", json={"lockWorkstation": False}).status_code == 200
+        assert client.post("/api/agy/conversations/new", json={"prompt": "hi"}).status_code == 423
+        assert client.post(f"/api/agy/conversations/{conv_id}/message", json={"message": "hi"}).status_code == 423
+        assert client.post("/api/agy/terminal/exec", json={"command": "echo nope"}).status_code == 423
+        assert client.post("/api/panic/unlock", json={}).status_code == 200
+

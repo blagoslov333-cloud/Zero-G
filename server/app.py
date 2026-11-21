@@ -43,6 +43,7 @@ from server.contracts import (
     TimelineStep,
     WorktreeTaskRequest,
 )
+from server.antigravity_desktop import AntigravityDesktopBridge
 from server.db import ZeroGDatabase
 from server.rules_engine import RulesEngine
 from server.security import EgressRedactor
@@ -256,6 +257,7 @@ class ZeroGState:
         self.data_dir = data_dir
         self.db = ZeroGDatabase(db_path)
         self.redactor = EgressRedactor()
+        self.agy_bridge = AntigravityDesktopBridge(redactor=self.redactor)
         self.auth = AuthManager(data_dir=data_dir, db=self.db)
         self.rules_engine = RulesEngine(self.db)
 
@@ -1224,16 +1226,24 @@ def create_app(
     @app.get("/api/projects")
     async def api_projects() -> list[dict[str, Any]]:
         state._bind_sibling_modules()
-        projects_by_name: dict[str, ProjectSummary] = {}
+        projects_by_path: dict[str, ProjectSummary] = {}
 
-        seeded = state.db.get_kv("seeded_projects", [])
-        if isinstance(seeded, list):
-            for p in seeded:
-                try:
-                    model = ProjectSummary.model_validate(p)
-                    projects_by_name[model.name.lower()] = model
-                except Exception:
-                    continue
+        for rp in state.agy_bridge.discover_real_projects():
+            p_path = str(rp["path"])
+            if not os.path.isdir(p_path):
+                continue
+            key = os.path.normcase(os.path.abspath(p_path))
+            low_name = str(rp["name"]).lower()
+            projects_by_path[key] = ProjectSummary(
+                id=str(rp["id"]),
+                name=str(rp["name"]),
+                path=p_path,
+                icon="clapperboard" if "video" in low_name else "folder",
+                accentToken="--accent-secondary" if "video" in low_name else "--accent-primary",
+                providerHint="antigravity",
+                gitBranch=rp.get("gitBranch"),
+                isSeededDemo=False,
+            )
 
         if _adapters_mod is not None:
             all_adapters_fn = getattr(_adapters_mod, "all_adapters", None)
@@ -1243,30 +1253,16 @@ def create_app(
                         if hasattr(adapter, "discover_projects"):
                             for p in adapter.discover_projects():
                                 model = p if isinstance(p, ProjectSummary) else ProjectSummary.model_validate(p)
-                                key = model.name.lower()
-                                if key not in projects_by_name:
-                                    projects_by_name[key] = model
+                                if model.isSeededDemo or not os.path.isdir(model.path):
+                                    continue
+                                key = os.path.normcase(os.path.abspath(model.path))
+                                if key not in projects_by_path:
+                                    projects_by_path[key] = model
                 except Exception:
                     pass
 
-        scratch_dir = Path(r"C:\Users\blagoslov333\.gemini\antigravity\scratch")
-        if scratch_dir.is_dir():
-            for child in sorted(scratch_dir.iterdir()):
-                if child.is_dir() and not child.name.startswith("."):
-                    key = child.name.lower()
-                    if key not in projects_by_name:
-                        projects_by_name[key] = ProjectSummary(
-                            id=f"proj-{key.replace(' ', '-')}",
-                            name=child.name,
-                            path=str(child),
-                            icon="clapperboard" if "video" in key else "folder",
-                            accentToken="--accent-secondary" if "video" in key else "--accent-primary",
-                            providerHint="antigravity",
-                            isSeededDemo=False,
-                        )
-
         sessions = state.db.list_sessions()
-        for proj in projects_by_name.values():
+        for proj in projects_by_path.values():
             proj.activeSessions = sum(
                 1
                 for s in sessions
@@ -1274,7 +1270,7 @@ def create_app(
                 and s.status in ("running", "waiting_approval", "idle")
             )
 
-        return [p.model_dump() for p in projects_by_name.values()]
+        return [p.model_dump() for p in projects_by_path.values()]
 
     @app.get("/api/sessions")
     async def api_sessions(projectId: str | None = Query(default=None)) -> list[dict[str, Any]]:
@@ -2474,6 +2470,189 @@ def create_app(
             providers["antigravity"] = ag_snip
             configs_list.append(ag_snip)
         return {"shimCommand": shim_cmd, "providers": providers, "configs": configs_list}
+
+    # -------------------------------------------------------------------------
+    # Antigravity Desktop Bridge Endpoints (/api/agy/*)
+    # -------------------------------------------------------------------------
+
+    @app.get("/api/agy/projects")
+    async def api_agy_projects() -> dict[str, Any]:
+        return {"projects": state.agy_bridge.discover_real_projects()}
+
+    @app.get("/api/agy/conversations")
+    async def api_agy_conversations(
+        projectPath: str = Query(default=""),
+        includeSubagents: bool = Query(default=False),
+        limit: int = Query(default=60),
+    ) -> dict[str, Any]:
+        return {
+            "conversations": state.agy_bridge.list_conversations(
+                project_path=projectPath,
+                include_subagents=includeSubagents,
+                limit=limit,
+            )
+        }
+
+    @app.post("/api/agy/conversations/new")
+    async def api_agy_conversations_new(request: Request) -> dict[str, Any]:
+        if state.host_locked:
+            raise HTTPException(status_code=423, detail="HOST_LOCKED: Cannot start conversation while Panic Lock is active")
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="JSON object body is required")
+        prompt = str(body.get("prompt") or "")
+        title = body.get("title")
+        model = body.get("model")
+        workspace_path = body.get("workspacePath")
+        try:
+            return await state.agy_bridge.start_new_conversation(
+                prompt=prompt,
+                title=str(title) if title is not None else None,
+                model=str(model) if model is not None else None,
+                workspace_path=str(workspace_path) if workspace_path is not None else None,
+                db=state.db,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.get("/api/agy/conversations/{conversation_id}")
+    async def api_agy_conversation_detail(
+        conversation_id: str,
+        limit: int = Query(default=150),
+    ) -> dict[str, Any]:
+        try:
+            return state.agy_bridge.get_conversation_detail(conversation_id, limit=limit)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
+    @app.post("/api/agy/conversations/{conversation_id}/message")
+    async def api_agy_conversation_message(conversation_id: str, request: Request) -> dict[str, Any]:
+        if state.host_locked:
+            raise HTTPException(status_code=423, detail="HOST_LOCKED: Cannot send message while Panic Lock is active")
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="JSON object body is required")
+        message = str(body.get("message") or "")
+        try:
+            return await state.agy_bridge.send_conversation_message(
+                conversation_id=conversation_id,
+                message=message,
+                db=state.db,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.get("/api/agy/conversations/{conversation_id}/artifact")
+    async def api_agy_conversation_artifact(
+        conversation_id: str,
+        path: str = Query(default=""),
+    ) -> dict[str, Any]:
+        try:
+            status_code, payload = state.agy_bridge.read_artifact(conversation_id, path)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        if status_code != 200:
+            raise HTTPException(status_code=status_code, detail=payload.get("detail", "Artifact read failed"))
+        return payload
+
+    @app.get("/api/agy/files/list")
+    async def api_agy_files_list(
+        projectPath: str = Query(default=""),
+        dir: str = Query(default=""),
+    ) -> dict[str, Any]:
+        status_code, payload = state.agy_bridge.list_workspace_files(projectPath, dir)
+        if status_code != 200:
+            raise HTTPException(status_code=status_code, detail=payload.get("detail", "File list failed"))
+        return payload
+
+    @app.get("/api/agy/files/read")
+    async def api_agy_files_read(
+        projectPath: str = Query(default=""),
+        path: str = Query(default=""),
+    ) -> dict[str, Any]:
+        status_code, payload = state.agy_bridge.read_workspace_file(projectPath, path)
+        if status_code != 200:
+            raise HTTPException(status_code=status_code, detail=payload.get("detail", "File read failed"))
+        return payload
+
+    @app.get("/api/agy/customizations")
+    async def api_agy_customizations() -> dict[str, Any]:
+        return state.agy_bridge.list_customizations()
+
+    @app.post("/api/agy/terminal/exec")
+    async def api_agy_terminal_exec(request: Request) -> dict[str, Any]:
+        if state.host_locked:
+            raise HTTPException(status_code=423, detail="HOST_LOCKED: Terminal execution blocked while Panic Lock is active")
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="JSON object body is required")
+        command = str(body.get("command") or "").strip()
+        if not command:
+            raise HTTPException(status_code=400, detail="command is required")
+
+        cwd_raw = body.get("cwd")
+        cwd = str(cwd_raw).strip() if isinstance(cwd_raw, str) and cwd_raw.strip() else None
+        if cwd is not None and not os.path.isdir(cwd):
+            raise HTTPException(status_code=400, detail=f"Invalid working directory: {cwd}")
+
+        eval_res = state.rules_engine.evaluate("run_command", {"command": command}, cwd=cwd)
+        if eval_res["riskTier"] >= 3 or eval_res["autoDecision"] == "deny":
+            raise HTTPException(
+                status_code=403,
+                detail=f"Blocked by 0G Tier-3 RulesEngine: {'; '.join(eval_res['riskReasons'])}",
+            )
+
+        state._bind_sibling_modules()
+        if state.pty_mux is not None and hasattr(state.pty_mux, "run_macro"):
+            res = await _maybe_await(state.pty_mux.run_macro(command, cwd=cwd))
+        else:
+            started = time.time()
+            resolved_cwd = cwd or os.getcwd()
+            proc = await asyncio.create_subprocess_shell(
+                command,
+                cwd=resolved_cwd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            timed_out = False
+            try:
+                out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=30.0)
+            except asyncio.TimeoutError:
+                timed_out = True
+                proc.kill()
+                out_b, err_b = await proc.communicate()
+            res = {
+                "ok": (proc.returncode == 0) and not timed_out,
+                "returncode": proc.returncode if proc.returncode is not None else -1,
+                "stdout": out_b.decode("utf-8", errors="replace"),
+                "stderr": err_b.decode("utf-8", errors="replace"),
+                "cwd": resolved_cwd,
+                "durationMs": int((time.time() - started) * 1000),
+                "timedOut": timed_out,
+            }
+
+        clean_stdout, _ = state.redactor.redact(str(res.get("stdout") or ""))
+        clean_stderr, _ = state.redactor.redact(str(res.get("stderr") or ""))
+        return {
+            "ok": bool(res.get("ok", False)),
+            "returncode": int(res["returncode"]) if res.get("returncode") is not None else -1,
+            "stdout": clean_stdout,
+            "stderr": clean_stderr,
+            "cwd": str(res.get("cwd") or cwd or os.getcwd()),
+            "durationMs": int(res.get("durationMs", 0)),
+            "timedOut": bool(res.get("timedOut", False)),
+        }
 
     # -------------------------------------------------------------------------
     # Always-On Two-Way WebSocket State Stream (/ws/stream?since=0)

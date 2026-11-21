@@ -2,28 +2,30 @@
 
 [![Zero-G CI](https://github.com/blagoslov333-cloud/Zero-G/actions/workflows/ci.yml/badge.svg)](https://github.com/blagoslov333-cloud/Zero-G/actions/workflows/ci.yml)
 
-**Zero-G (0G)** is a local-first Windows bridge (`127.0.0.1:8790`) and mobile-first React PWA for controlling AI coding agents from your phone while your laptop stays in your backpack. It supports **Antigravity (Priority #1)** natively alongside **Claude Code**, **OpenAI Codex CLI**, and **xAI Grok Build**, with zero cloud lock-in, always-on two-way WebSocket state sync, adaptive Windows power governance, and live **Phone-Authored MCP Tools**.
+**Zero-G (0G)** is a local-first Windows bridge (`127.0.0.1:8790`) and mobile-first React PWA serving as a 4-tab mobile remote and Desktop IDE companion for autonomous AI coding agents. It provides native first-class integration for **Antigravity (Priority #1)** via real-time SQLite WAL streaming (`conversation_summaries.db`), transcript ingestion (`transcript.jsonl`), and prompt injection (`agentapi.bat`), alongside multi-provider hook support for **Claude Code**, **OpenAI Codex CLI**, and **xAI Grok Build**, with zero cloud lock-in, always-on two-way WebSocket state sync, adaptive Windows power governance, and a global inline permission banner.
 
 ---
 
 ## Architecture
 
 ```text
-+-----------------------+       HTTPS / WSS       +----------------------------------+
-|   Paired Phone PWA    | <=====================> |  Cloudflare Tunnel / Tailscale   |
-|  - Approvals (25s)    |    Two-Way /ws/stream   +----------------------------------+
-|  - Offline Outbox     |                                         |
-|  - Phone Tool Studio  |                                         v
-|  - Host & PTY Vitals  |                         +----------------------------------+
-+-----------------------+                         |  0G Bridge Daemon (127.0.0.1)    |
-                                                  |  - FastAPI + SQLite WAL + Audit  |
-+-----------------------+   JSON-RPC 2.0 Stdio    |  - EgressRedactor & RulesEngine  |
-|  IDE / CLI Agents     | <=====================> |  - BackpackPowerGovernor (Win32) |
-|  - Antigravity (#1)   |    server/mcp_server.py |  - JobObjectPtyMux & GitManager  |
-|  - Claude Code        |                         +----------------------------------+
-|  - OpenAI Codex CLI   |                                         ^
-|  - xAI Grok Build     |         hooks/shim.py (python -I -S)    |
-+-----------------------+ ----------------------------------------+
++---------------------------------------+       HTTPS / WSS       +----------------------------------+
+|           Paired Phone PWA            | <=====================> |  Cloudflare Tunnel / Tailscale   |
+|  - 4 Tabs: Chat, Projects,            |    Two-Way /ws/stream   +----------------------------------+
+|    Terminal, Laptop                   |                                         |
+|  - Global Inline Permission Banner    |                                         v
+|  - Real-Time Antigravity Stream       |                         +----------------------------------+
+|  - Workspace IDE & Code Viewer        |                         |  0G Bridge Daemon (127.0.0.1)    |
+|  - Remote Terminal & Power Governor   |                         |  - FastAPI + SQLite WAL + Audit  |
++---------------------------------------+                         |  - AntigravityDesktopBridge      |
+                                                                  |  - EgressRedactor & RulesEngine  |
++---------------------------------------+   Read-only DB / CLI    |  - BackpackPowerGovernor (Win32) |
+|      Antigravity Desktop & SDK        | <=====================> |  - JobObjectPtyMux & GitManager  |
+|  - conversation_summaries.db (WAL)    |   transcript.jsonl /    +----------------------------------+
+|  - ~/.gemini/antigravity/brain/       |   agentapi.bat / stdio                  ^
+|  - Multi-Provider Hooks Support       |                                         |
+|    (Claude Code, Codex, Grok)         |         hooks/shim.py (python -I -S)    |
++---------------------------------------+ ----------------------------------------+
 ```
 
 ---
@@ -58,7 +60,7 @@ The local server binds strictly to `127.0.0.1:8790` on your laptop (never open `
 
 ## Multi-Provider Hook Setup
 
-Fetch ready-to-paste hook configs anytime from `GET /api/adapters/hook-configs` or the **Host** tab in the PWA:
+Fetch ready-to-paste hook configs anytime from `GET /api/adapters/hook-configs` or the **Laptop** tab in the PWA:
 
 | Provider | Priority | Config File | Worker Runner |
 | :--- | :--- | :--- | :--- |
@@ -71,6 +73,15 @@ Fetch ready-to-paste hook configs anytime from `GET /api/adapters/hook-configs` 
 
 ## Key Capabilities
 
+### Antigravity Desktop Bridge & 4-Tab Mobile Workspace UI
+- **Tab 1 — Chat (`ChatTab`)**: Streams live conversation threads directly from local `conversation_summaries.db` and `transcript.jsonl` with prompt injection via `agentapi.bat`. Features collapsible Thinking sections, expandable Tool Call chips, Subagents & Swarm drawer, rendered Artifacts viewer sheet, and bottom composer with `/` Slash Command picker (`/plan`, `/grill-me`, `/boost`, etc.) and `@` File Mention autocomplete.
+- **Tab 2 — Projects (`ProjectsWorkspaceTab`)**: Real local workspace list (`C:\Users\...\F`, `scratch`) opening into a Desktop-style Project Workspace with breadcrumb directory browsing (`/api/agy/files/list`), line-numbered code viewer (`/api/agy/files/read`) with **"Ask Agent about `@file`"** CTA, Git diffs and file revert, and project chats.
+- **Tab 3 — Terminal (`TerminalTab`)**: Project directory selection, quick shortcut chips (`git status`, `git log -5 --oneline`, `pytest`, `npm run build`), and secure remote command execution on host (`POST /api/agy/terminal/exec`).
+- **Tab 4 — Laptop (`LaptopTab`)**: Independent Agent Gate Mode (`Ask on Phone` vs `Agent Turbo`), separated 5-gear Backpack Power Governor, Antigravity Skills/Plugins/Rules inspection (`GET /api/agy/customizations`), host vitals, and auto-healing Cloudflare Tunnel + QR pairing.
+
+### Global Inline Permission Banner
+Surfaces `Ask on Phone` approval prompts (`Approve`, `Allow 30m`, `Deny`) cleanly across any active tab whenever an agent execution is held in Mode A, featuring a tabular countdown bar and AST risk tier badges (Tier 0–3).
+
 ### Agent Gate Mode vs. Laptop Hardware Power
 `Agent Gate Mode` (`ask_on_phone` vs `agent_turbo`) is independent from the 5 laptop power gears (`ultra_sip`, `auto_turbo`, `balanced`, `max_turbo`, `low_battery_guard`):
 - **Agent Gate Mode**: Controls hook execution permissions. In `ask_on_phone` mode, tool use is held in a 25-second queue awaiting phone approval. In `agent_turbo` mode, Tier 0–2 actions are auto-approved while Tier 3 destructive operations and secrets remain strictly blocked.
@@ -80,16 +91,6 @@ Fetch ready-to-paste hook configs anytime from `GET /api/adapters/hook-configs` 
 - **`ultra_sip`**: When idle on battery/backpack (`autoGovernorEnabled=True`), drops Windows to the Best Power Efficiency overlay (`PowerSetActiveOverlayScheme`) and processor throttling while keeping `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` active only as needed so your hotspot tunnel never drops.
 - **`auto_turbo`**: Immediately restores full Balanced/High Performance CPU boost the instant a desktop hook or Mode-B worker begins executing.
 - **PANIC Host Lock**: One tap from the header sets `HOST_LOCKED`, denies/terminates active hooks, terminates `JobObjectPtyMux` PowerShell children via Win32 `TerminateJobObject`, and optionally calls `LockWorkStation()`.
-
-### Phone-Authored MCP Tools (`server/mobile_tools.py` & `server/mcp_server.py`)
-- Built-in phone capabilities exposed immediately over Stdio JSON-RPC 2.0 (`0g_mobile`):
-  - `phone_notify_card`
-  - `phone_ask_input`
-  - `phone_read_clipboard`
-  - `phone_capture_photo`
-  - `phone_get_location`
-  - `phone_speak_tts`
-- Author custom `phone_js` or `host_command` tools directly inside the phone **Tools** tab — `tools/list` queries the live daemon on every agent turn so new tools appear without restarting your agent.
 
 ### Security & Tamper-Evident Audit
 - **`EgressRedactor`**: Strips ANSI escapes & Unicode BiDi overrides and masks API keys (`sk-`, `AIza`, `ghp_`, `xai-`, `AKIA`, Bearer tokens, PEM blocks, `.env` secrets) before streaming to your phone.
