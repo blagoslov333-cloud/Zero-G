@@ -38,8 +38,9 @@ def _resolve_inside_repo(repo_path: str, file_path: str, allow_dot_git: bool = F
     """Validate that file_path resolves strictly inside repo_path without traversal."""
     if not repo_path or not file_path:
         return False, "", "Empty repo_path or file_path"
+    normalized_file_path = file_path.replace("\\", "/")
     repo_abs = _win32_full_path(repo_path)
-    candidate = file_path if os.path.isabs(file_path) else os.path.join(repo_abs, file_path)
+    candidate = normalized_file_path if os.path.isabs(normalized_file_path) else os.path.join(repo_abs, normalized_file_path)
     target_abs = _win32_full_path(candidate)
 
     repo_cmp = os.path.normcase(repo_abs)

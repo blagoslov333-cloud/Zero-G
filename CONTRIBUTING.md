@@ -1,6 +1,6 @@
-# Contributing to 0G
+# Contributing to Zero-G (0G)
 
-Thanks for helping build **0G**! This repository is structured so backend adapters, Windows host controls, Antigravity plugin packaging, and the React PWA stay cleanly decoupled.
+Thanks for helping build **Zero-G (0G)** ([https://github.com/blagoslov333-cloud/Zero-G](https://github.com/blagoslov333-cloud/Zero-G))! This repository is structured so backend adapters, Windows host controls, Antigravity plugin packaging, and the React PWA stay cleanly decoupled.
 
 ## Project Layout
 

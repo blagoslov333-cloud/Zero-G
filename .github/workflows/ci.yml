@@ -1,4 +1,4 @@
-name: 0G CI
+name: Zero-G CI
 
 on:
   push:

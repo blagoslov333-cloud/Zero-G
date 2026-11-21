@@ -19,6 +19,11 @@ logger = logging.getLogger("0g.pty_mux")
 IS_WINDOWS = os.name == "nt"
 CREATE_NO_WINDOW = 0x08000000
 
+
+def _is_powershell(shell_path: str) -> bool:
+    """Return True when shell_path refers to pwsh or powershell."""
+    return os.path.basename(shell_path).lower().startswith(("pwsh", "powershell"))
+
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 JobObjectExtendedLimitInformation = 9
 PROCESS_SET_QUOTA = 0x0100
@@ -203,7 +208,7 @@ class JobObjectPtyMux:
         else:
             args = (
                 [resolved_shell, "-NoLogo", "-NoProfile", "-NoExit", "-Command", "-"]
-                if IS_WINDOWS
+                if _is_powershell(resolved_shell)
                 else [resolved_shell]
             )
             proc = await asyncio.create_subprocess_exec(
@@ -314,7 +319,7 @@ class JobObjectPtyMux:
 
         args = (
             [shell_exe, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command]
-            if IS_WINDOWS
+            if _is_powershell(shell_exe)
             else [shell_exe, "-c", command]
         )
 

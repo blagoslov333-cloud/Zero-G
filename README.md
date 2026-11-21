@@ -1,6 +1,8 @@
-# 0G — Zero-Weight Mobile Remote & Host Control
+# Zero-G (0G) — Zero-Weight Mobile Remote & Host Control
 
-**0G** is a local-first Windows bridge (`127.0.0.1:8790`) and mobile-first React PWA for controlling AI coding agents from your phone while your laptop stays in your backpack. It supports **Antigravity (Priority #1)** natively alongside **Claude Code**, **OpenAI Codex CLI**, and **xAI Grok Build**, with zero cloud lock-in, always-on two-way WebSocket state sync, adaptive Windows power governance, and live **Phone-Authored MCP Tools**.
+[![Zero-G CI](https://github.com/blagoslov333-cloud/Zero-G/actions/workflows/ci.yml/badge.svg)](https://github.com/blagoslov333-cloud/Zero-G/actions/workflows/ci.yml)
+
+**Zero-G (0G)** is a local-first Windows bridge (`127.0.0.1:8790`) and mobile-first React PWA for controlling AI coding agents from your phone while your laptop stays in your backpack. It supports **Antigravity (Priority #1)** natively alongside **Claude Code**, **OpenAI Codex CLI**, and **xAI Grok Build**, with zero cloud lock-in, always-on two-way WebSocket state sync, adaptive Windows power governance, and live **Phone-Authored MCP Tools**.
 
 ---
 
@@ -44,7 +46,7 @@ python -m server.app
 zerog
 ```
 
-The daemon binds strictly to `127.0.0.1:8790` and serves both the Mobile PWA (`/`) and the Desktop Aux Pane (`/?view=auxpane`).
+The daemon binds strictly to `127.0.0.1:8790` and serves both the Mobile PWA (`/`) and the Desktop Aux Pane (`/?view=auxpane`). Re-running `python -m server.app` when port `8790` is already running prints status cleanly instead of raising `[WinError 10048]`.
 
 ### 3. Pair Your Phone via Hotspot-Safe Tunnel
 
@@ -68,6 +70,11 @@ Fetch ready-to-paste hook configs anytime from `GET /api/adapters/hook-configs` 
 ---
 
 ## Key Capabilities
+
+### Agent Gate Mode vs. Laptop Hardware Power
+`Agent Gate Mode` (`ask_on_phone` vs `agent_turbo`) is independent from the 5 laptop power gears (`ultra_sip`, `auto_turbo`, `balanced`, `max_turbo`, `low_battery_guard`):
+- **Agent Gate Mode**: Controls hook execution permissions. In `ask_on_phone` mode, tool use is held in a 25-second queue awaiting phone approval. In `agent_turbo` mode, Tier 0–2 actions are auto-approved while Tier 3 destructive operations and secrets remain strictly blocked.
+- **Laptop Hardware Power Gears**: Controls host physical power management (CPU throttling, OS power schemes, and display state). Clicking `ultra_sip` locks `manualGear` (`autoGovernorEnabled=False`) to enforce maximum battery conservation regardless of running agent tasks, remaining locked until `auto_turbo` is selected to re-enable autonomous dynamic scaling.
 
 ### Adaptive Backpack Power Governor (`server/power_governor.py`)
 - **`ultra_sip`**: When idle on battery/backpack (`autoGovernorEnabled=True`), drops Windows to the Best Power Efficiency overlay (`PowerSetActiveOverlayScheme`) and processor throttling while keeping `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` active only as needed so your hotspot tunnel never drops.
@@ -93,7 +100,15 @@ Fetch ready-to-paste hook configs anytime from `GET /api/adapters/hook-configs` 
 
 ## Design & Theming (`DESIGN.md`)
 
-100% of visual styling is tokenized in [tokens.dtcg.json](tokens.dtcg.json) and [web/src/styles/theme.css](web/src/styles/theme.css) following [DESIGN.md](DESIGN.md):
-- `obsidian` (Default Style #13 Obsidian Dark Bento Grid)
-- `outdoor` (High-contrast daylight mobile theme)
+100% of visual styling is tokenized as color-agnostic semantic CSS variable slots in [tokens.dtcg.json](tokens.dtcg.json) and [web/src/styles/theme.css](web/src/styles/theme.css) following [DESIGN.md](DESIGN.md), ready for custom design skinning:
+- `obsidian` (Default structural baseline preset)
+- `outdoor` (Daylight high-contrast mobile preset)
 - `wireframe` (Neutral structural studio grid for design reskinning)
+
+---
+
+## Documentation
+
+- **[PRODUCT.md](PRODUCT.md)** — Product context, target audience, surface modes (`Operate` vs `Persuade`), core user flows, and platform constraints.
+- **[DESIGN.md](DESIGN.md)** — Design handoff specification, color-agnostic semantic CSS variable slots, DTCG tokens, and mobile layout specifications.
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — Architecture breakdown, local development checks, and security rules.

@@ -96,6 +96,41 @@ def _read_system_times() -> tuple[int, int, int] | None:
     )
 
 
+def _parse_proc_meminfo(text: str) -> tuple[int, int]:
+    """Parse /proc/meminfo kB values into (used_mb, total_mb)."""
+    values_kb: dict[str, int] = {}
+    for raw_line in text.splitlines():
+        if ":" not in raw_line:
+            continue
+        key, rest = raw_line.split(":", 1)
+        parts = rest.strip().split()
+        if not parts:
+            continue
+        try:
+            values_kb[key.strip()] = int(parts[0])
+        except ValueError:
+            continue
+
+    total_kb = values_kb.get("MemTotal", 0)
+    if total_kb <= 0:
+        return 0, 0
+
+    if "MemAvailable" in values_kb:
+        avail_kb = values_kb["MemAvailable"]
+    else:
+        avail_kb = (
+            values_kb.get("MemFree", 0)
+            + values_kb.get("Buffers", 0)
+            + values_kb.get("Cached", 0)
+        )
+
+    total_mb = total_kb // 1024
+    if total_mb <= 0:
+        return 0, 0
+    avail_mb = max(0, avail_kb // 1024)
+    return max(0, total_mb - avail_mb), total_mb
+
+
 def _read_memory_mb() -> tuple[int, int]:
     if IS_WINDOWS:
         stat = MEMORYSTATUSEX()
@@ -105,6 +140,25 @@ def _read_memory_mb() -> tuple[int, int]:
                 total_mb = int(stat.ullTotalPhys // (1024 * 1024))
                 avail_mb = int(stat.ullAvailPhys // (1024 * 1024))
                 return max(0, total_mb - avail_mb), total_mb
+        except Exception:
+            pass
+
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8", errors="replace") as f:
+            used_mb, total_mb = _parse_proc_meminfo(f.read())
+        if total_mb > 0:
+            return used_mb, total_mb
+    except Exception:
+        pass
+
+    if hasattr(os, "sysconf"):
+        try:
+            pages = os.sysconf("SC_PHYS_PAGES")
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            if isinstance(pages, int) and isinstance(page_size, int) and pages > 0 and page_size > 0:
+                total_mb = int((pages * page_size) // (1024 * 1024))
+                if total_mb > 0:
+                    return 0, total_mb
         except Exception:
             pass
 

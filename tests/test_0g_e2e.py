@@ -27,7 +27,7 @@ if str(REPO_ROOT) not in sys.path:
 from server.app import create_app
 from server.db import ZeroGDatabase
 from server.git_ops import GitManager
-from server.host_control import HostTelemetry
+from server.host_control import HostTelemetry, _parse_proc_meminfo
 from server.power_governor import BackpackPowerGovernor
 from server.pty_mux import JobObjectPtyMux
 from server.rules_engine import RulesEngine
@@ -711,6 +711,7 @@ def test_windows_host_modules_and_audit_chain(tmp_path: Path) -> None:
     gov.notify_job_finished("swarm-task-1")
 
     # HostTelemetry zero-psutil snapshot
+    assert _parse_proc_meminfo("MemTotal:       16384000 kB\nMemAvailable:    8192000 kB\n") == (8000, 16000)
     tel = HostTelemetry(power_governor=gov)
     snap = tel.snapshot()
     assert snap.hostname
@@ -724,14 +725,14 @@ def test_windows_host_modules_and_audit_chain(tmp_path: Path) -> None:
         mux = JobObjectPtyMux()
         try:
             sess = await mux.create_session(cwd=str(REPO_ROOT))
-            await mux.write_input(sess["sessionId"], 'Write-Output "E2E_PTY_OK"\n')
+            await mux.write_input(sess["sessionId"], 'echo E2E_PTY_OK\n')
             for _ in range(20):
                 if "E2E_PTY_OK" in mux.get_output(sess["sessionId"]):
                     break
                 await asyncio.sleep(0.1)
             assert "E2E_PTY_OK" in mux.get_output(sess["sessionId"])
 
-            macro = await mux.run_macro('Write-Output "E2E_MACRO_OK"', cwd=str(REPO_ROOT))
+            macro = await mux.run_macro('echo E2E_MACRO_OK', cwd=str(REPO_ROOT))
             assert macro["ok"] is True
             assert "E2E_MACRO_OK" in macro["stdout"]
 
@@ -758,8 +759,8 @@ def test_windows_host_modules_and_audit_chain(tmp_path: Path) -> None:
     assert gm.get_branch(str(repo)) is not None
 
     # Path traversal blocked
-    esc = gm.revert_file(str(repo), r"..\..\outside.txt")
-    assert esc["ok"] is False
+    assert gm.revert_file(str(repo), r"..\..\outside.txt")["ok"] is False
+    assert gm.revert_file(str(repo), "../../outside.txt")["ok"] is False
 
     # Dirty file revert
     tracked.write_text("dirty\n", encoding="utf-8")
