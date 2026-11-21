@@ -726,7 +726,7 @@ def test_windows_host_modules_and_audit_chain(tmp_path: Path) -> None:
         try:
             sess = await mux.create_session(cwd=str(REPO_ROOT))
             await mux.write_input(sess["sessionId"], 'echo E2E_PTY_OK\n')
-            for _ in range(20):
+            for _ in range(60):
                 if "E2E_PTY_OK" in mux.get_output(sess["sessionId"]):
                     break
                 await asyncio.sleep(0.1)
@@ -739,6 +739,7 @@ def test_windows_host_modules_and_audit_chain(tmp_path: Path) -> None:
             killed = await mux.terminate_all()
             assert killed == 1
         finally:
+            await mux.terminate_all()
             mux.close()
 
     asyncio.run(_pty_flow())

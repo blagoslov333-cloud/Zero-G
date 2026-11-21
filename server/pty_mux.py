@@ -156,7 +156,12 @@ class JobObjectPtyMux:
     def resolve_shell(preferred: str | None = None) -> str:
         if preferred and shutil.which(preferred):
             return shutil.which(preferred) or preferred
-        for candidate in ("pwsh", "powershell.exe", "powershell"):
+        candidates = (
+            ("pwsh", "powershell.exe", "powershell")
+            if IS_WINDOWS
+            else ("bash", "sh", "zsh", "pwsh")
+        )
+        for candidate in candidates:
             found = shutil.which(candidate)
             if found:
                 return found
@@ -355,6 +360,16 @@ class JobObjectPtyMux:
         }
 
     def close(self) -> None:
+        for sess in list(self._sessions.values()):
+            sess.closed = True
+            for task in sess.reader_tasks:
+                task.cancel()
+            if sess.process is not None and sess.process.returncode is None:
+                try:
+                    sess.process.kill()
+                except Exception:
+                    pass
+        self._sessions.clear()
         self._job.close()
 
     async def _read_stream_loop(self, sess: _PtySession, stream: asyncio.StreamReader, kind: str) -> None:
@@ -399,17 +414,25 @@ class JobObjectPtyMux:
         sess.closed = True
         for task in sess.reader_tasks:
             task.cancel()
+        if sess.reader_tasks:
+            await asyncio.gather(*sess.reader_tasks, return_exceptions=True)
         if sess.winpty_proc is not None:
             try:
                 await asyncio.to_thread(sess.winpty_proc.terminate, True)
             except Exception:
                 pass
-        if sess.process is not None and sess.process.returncode is None:
-            try:
-                sess.process.kill()
-                await asyncio.wait_for(sess.process.wait(), timeout=2.0)
-            except Exception:
-                pass
+        if sess.process is not None:
+            if sess.process.stdin is not None:
+                try:
+                    sess.process.stdin.close()
+                except Exception:
+                    pass
+            if sess.process.returncode is None:
+                try:
+                    sess.process.kill()
+                    await asyncio.wait_for(sess.process.wait(), timeout=2.0)
+                except Exception:
+                    pass
 
     def _serialize_session(self, sess: _PtySession) -> dict[str, Any]:
         alive = False
