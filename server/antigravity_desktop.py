@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
+from concurrent.futures import ThreadPoolExecutor
 import datetime as dt
 import json
 import mimetypes
@@ -38,6 +40,7 @@ _MARKDOWN_EXTS = {".md", ".markdown", ".mdx"}
 _HTML_EXTS = {".html", ".htm"}
 
 _MAX_IMAGE_ARTIFACT_BYTES = 2 * 1024 * 1024
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 _MAX_TEXT_FILE_BYTES = 256 * 1024
 _MAX_TEXT_FILE_LINES = 2000
 _MAX_ARTIFACTS = 200
@@ -53,6 +56,9 @@ _SECRET_FILENAMES = {
     "id_ed25519",
 }
 _SECRET_EXTS = {".pem", ".key", ".pfx"}
+_DANGEROUS_UPLOAD_EXTS = {".exe", ".bat", ".cmd", ".ps1", ".vbs", ".msi"}
+_VALID_PERMISSION_PRESETS = {"inherit", "request_review", "default", "auto", "turbo"}
+_VALID_WORKTREE_MODES = {"local", "worktree"}
 
 _STRIP_BLOCK_TAGS_RE = re.compile(
     r"<(?:ADDITIONAL_METADATA|USER_SETTINGS_CHANGE|CONTEXT_SUMMARY)>[\s\S]*?</(?:ADDITIONAL_METADATA|USER_SETTINGS_CHANGE|CONTEXT_SUMMARY)>",
@@ -233,6 +239,13 @@ class AntigravityDesktopBridge:
     def __init__(self, redactor: EgressRedactor | None = None) -> None:
         self.redactor = redactor or EgressRedactor()
         self.git_manager = GitManager(timeout_sec=3.0)
+        self._projects_cache: dict[tuple[str, tuple[str, ...]], tuple[float, list[dict[str, Any]]]] = {}
+        self._title_redact_cache: dict[str, str] = {}
+        self._last_db: Any = None
+
+    def invalidate_projects_cache(self) -> None:
+        """Clear the short-lived project discovery cache."""
+        self._projects_cache.clear()
 
     @property
     def agy_dir(self) -> Path:
@@ -267,13 +280,30 @@ class AntigravityDesktopBridge:
         return sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
 
     def _has_swarm(self, conversation_id: str) -> bool:
-        swarm_dir = self.agy_dir / "brain" / conversation_id / ".system_generated" / "swarm"
-        return (swarm_dir / "plan.json").is_file() or (swarm_dir / "swarm.json").is_file()
+        swarm_dir = os.path.join(str(self.agy_dir), "brain", conversation_id, ".system_generated", "swarm")
+        if not os.path.isdir(swarm_dir):
+            return False
+        return (
+            os.path.isfile(os.path.join(swarm_dir, "plan.json"))
+            or os.path.isfile(os.path.join(swarm_dir, "swarm.json"))
+            or os.path.isfile(os.path.join(swarm_dir, "board.jsonl"))
+            or os.path.isfile(os.path.join(swarm_dir, "board.json"))
+        )
+
+    def _redact_title_fast(self, raw_title: str) -> str:
+        cached = self._title_redact_cache.get(raw_title)
+        if cached is not None:
+            return cached
+        clean_title, _ = self.redactor.redact(raw_title)
+        if len(self._title_redact_cache) < 4096:
+            self._title_redact_cache[raw_title] = clean_title
+        return clean_title
 
     def _read_all_conversations_from_db(self) -> list[dict[str, Any]] | None:
         conn = self._connect_ro()
         if conn is None:
             return None
+        fts_map: dict[str, tuple[str, str]] = {}
         try:
             tables = {
                 row[0]
@@ -287,27 +317,17 @@ class AntigravityDesktopBridge:
             has_fts = "conversations_fts" in tables
             has_parents = "conversation_parents" in tables
 
-            select_title = (
-                "COALESCE(NULLIF(cs.title, ''), fts.title, 'Untitled Conversation')"
-                if has_fts
-                else "COALESCE(NULLIF(cs.title, ''), 'Untitled Conversation')"
-            )
-            select_fts_proj = "fts.project" if has_fts else "''"
             select_cp_parent = "cp.parent_id" if has_parents else "''"
-            joins = []
-            if has_fts:
-                joins.append(
-                    "LEFT JOIN conversations_fts fts ON fts.conversation_id = cs.conversation_id AND fts.chunk_index = -1"
-                )
-            if has_parents:
-                joins.append(
-                    "LEFT JOIN conversation_parents cp ON cp.conversation_id = cs.conversation_id"
-                )
+            parent_join = (
+                "LEFT JOIN conversation_parents cp ON cp.conversation_id = cs.conversation_id"
+                if has_parents
+                else ""
+            )
 
             sql = f"""
                 SELECT
                     cs.conversation_id,
-                    {select_title} AS resolved_title,
+                    cs.title,
                     cs.step_count,
                     cs.last_modified_time,
                     cs.workspace_uris,
@@ -316,12 +336,26 @@ class AntigravityDesktopBridge:
                     cs.parent_conversation_id,
                     cs.not_fully_idle,
                     cs.killed,
-                    {select_fts_proj} AS fts_project,
                     {select_cp_parent} AS cp_parent_id
                 FROM conversation_summaries cs
-                {' '.join(joins)}
+                {parent_join}
             """
             rows = conn.execute(sql).fetchall()
+
+            if has_fts:
+                try:
+                    fts_rows = conn.execute(
+                        "SELECT conversation_id, title, project FROM conversations_fts WHERE chunk_index = -1"
+                    ).fetchall()
+                    for f_cid, f_title, f_proj in fts_rows:
+                        f_cid_str = str(f_cid or "").strip()
+                        if f_cid_str:
+                            fts_map[f_cid_str] = (
+                                str(f_title or "").strip(),
+                                str(f_proj or "").strip(),
+                            )
+                except sqlite3.Error:
+                    pass
         except sqlite3.Error:
             return None
         finally:
@@ -333,7 +367,7 @@ class AntigravityDesktopBridge:
         for row in rows:
             (
                 cid,
-                resolved_title,
+                cs_title,
                 step_count,
                 last_modified_time,
                 workspace_uris_raw,
@@ -342,13 +376,15 @@ class AntigravityDesktopBridge:
                 parent_conv_id,
                 not_fully_idle,
                 killed,
-                fts_project,
                 cp_parent_id,
             ) = row
 
             cid_str = str(cid or "").strip()
             if not cid_str:
                 continue
+
+            fts_title, fts_project = fts_map.get(cid_str, ("", ""))
+            resolved_title = str(cs_title or "").strip() or fts_title or "Untitled Conversation"
 
             parent_id = str(parent_conv_id or cp_parent_id or "").strip() or None
             if parent_id:
@@ -379,7 +415,7 @@ class AntigravityDesktopBridge:
             elif fts_project:
                 proj_name = str(fts_project).strip() or None
 
-            clean_title, _ = self.redactor.redact(str(resolved_title or "Untitled Conversation"))
+            clean_title = self._redact_title_fast(str(resolved_title or "Untitled Conversation"))
             raw_items.append(
                 {
                     "id": cid_str,
@@ -470,16 +506,39 @@ class AntigravityDesktopBridge:
     @staticmethod
     def _path_matches_project(workspace_path: str, project_path: str) -> bool:
         try:
-            ws_norm = os.path.normcase(os.path.abspath(workspace_path))
-            proj_norm = os.path.normcase(os.path.abspath(project_path))
+            ws_norm = os.path.normcase(_win32_full_path(workspace_path))
+            proj_norm = os.path.normcase(_win32_full_path(project_path))
             if ws_norm == proj_norm:
                 return True
             return os.path.commonpath([ws_norm, proj_norm]) == proj_norm
         except Exception:
             return False
 
+    def _probe_git_for_dir(self, proj_path: Path) -> tuple[str | None, int]:
+        git_branch: str | None = None
+        dirty_count = 0
+        try:
+            if (proj_path / ".git").exists():
+                git_branch = probe_git_branch(proj_path) or self.git_manager.get_branch(str(proj_path))
+                rc, out, _ = self.git_manager._run_git(
+                    str(proj_path),
+                    ["status", "--porcelain=v1"],
+                    read_only=True,
+                )
+                if rc == 0 and out:
+                    dirty_count = sum(1 for ln in out.splitlines() if ln.strip())
+        except Exception:
+            pass
+        return git_branch, dirty_count
+
     def discover_real_projects(self) -> list[dict[str, Any]]:
         """Discover real existing workspace directories from DB workspace_uris + extra_project_roots."""
+        cache_key = (str(self.agy_dir), tuple(str(p) for p in self.extra_project_roots))
+        now = time.monotonic()
+        cached = self._projects_cache.get(cache_key)
+        if cached is not None and (now - cached[0]) < 10.0:
+            return [dict(p, folders=list(p.get("folders") or [p["path"]])) for p in cached[1]]
+
         conversations = self._all_conversations()
         top_convs = [c for c in conversations if not c.get("parentConversationId")]
 
@@ -515,9 +574,23 @@ class AntigravityDesktopBridge:
                 if entry.is_dir():
                     _add_candidate(entry)
 
+        ordered_items = list(candidates_by_key.items())
+        git_results: dict[str, tuple[str | None, int]] = {}
+        if ordered_items:
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                futures = {
+                    norm_key: pool.submit(self._probe_git_for_dir, proj_path)
+                    for norm_key, proj_path in ordered_items
+                }
+                for norm_key, fut in futures.items():
+                    try:
+                        git_results[norm_key] = fut.result()
+                    except Exception:
+                        git_results[norm_key] = (None, 0)
+
         projects: list[dict[str, Any]] = []
         used_ids: set[str] = set()
-        for norm_key, proj_path in candidates_by_key.items():
+        for norm_key, proj_path in ordered_items:
             base_id = slugify(proj_path.name)
             proj_id = base_id
             if proj_id in used_ids:
@@ -525,17 +598,7 @@ class AntigravityDesktopBridge:
                 proj_id = f"{base_id}-{suffix}"
             used_ids.add(proj_id)
 
-            git_branch: str | None = None
-            dirty_count = 0
-            if (proj_path / ".git").exists():
-                git_branch = probe_git_branch(proj_path) or self.git_manager.get_branch(str(proj_path))
-                rc, out, _ = self.git_manager._run_git(
-                    str(proj_path),
-                    ["status", "--porcelain=v1"],
-                    read_only=True,
-                )
-                if rc == 0 and out:
-                    dirty_count = sum(1 for ln in out.splitlines() if ln.strip())
+            git_branch, dirty_count = git_results.get(norm_key, (None, 0))
 
             matching_convs = [
                 c
@@ -556,6 +619,10 @@ class AntigravityDesktopBridge:
                     "id": proj_id,
                     "name": proj_path.name,
                     "path": str(proj_path),
+                    "folders": [str(proj_path)],
+                    "permissionPreset": "inherit",
+                    "defaultWorktreeMode": "local",
+                    "isCustom": False,
                     "gitBranch": git_branch,
                     "dirtyCount": dirty_count,
                     "conversationCount": conv_count,
@@ -564,7 +631,321 @@ class AntigravityDesktopBridge:
             )
 
         projects.sort(key=lambda p: float(p["lastModifiedAt"]), reverse=True)
+        self._projects_cache[cache_key] = (
+            time.monotonic(),
+            [dict(p, folders=list(p["folders"])) for p in projects],
+        )
         return projects
+
+    def _load_project_configs(self, db: Any = None) -> dict[str, dict[str, Any]]:
+        if db is not None:
+            self._last_db = db
+        effective_db = db if db is not None else self._last_db
+        if effective_db is None or not hasattr(effective_db, "get_kv"):
+            return {}
+        raw = effective_db.get_kv("agy_project_configs", {})
+        if not isinstance(raw, dict):
+            return {}
+        return {str(k): dict(v) for k, v in raw.items() if isinstance(v, dict)}
+
+    @staticmethod
+    def _normalize_folder_list(raw_folders: list[Any]) -> list[str]:
+        norm_folders: list[str] = []
+        seen: set[str] = set()
+        for f in raw_folders:
+            s = str(f or "").strip()
+            if not s:
+                continue
+            resolved = _win32_full_path(s) if os.path.isdir(s) else os.path.normpath(s)
+            key = os.path.normcase(resolved)
+            if key not in seen:
+                seen.add(key)
+                norm_folders.append(resolved)
+        return norm_folders
+
+    def get_merged_projects(self, db: Any = None) -> list[dict[str, Any]]:
+        """Merge discovered projects with persisted multi-folder & permission preset configs."""
+        discovered = self.discover_real_projects()
+        configs = self._load_project_configs(db)
+        if not configs:
+            return discovered
+
+        disc_by_id = {p["id"]: p for p in discovered}
+        disc_by_path = {os.path.normcase(_win32_full_path(p["path"])): p for p in discovered}
+        top_convs: list[dict[str, Any]] | None = None
+
+        def _get_top_convs() -> list[dict[str, Any]]:
+            nonlocal top_convs
+            if top_convs is None:
+                top_convs = [c for c in self._all_conversations() if not c.get("parentConversationId")]
+            return top_convs
+
+        def _build_merged_entry(
+            proj_id: str,
+            name: str,
+            folders: list[str],
+            preset: str,
+            wt_mode: str,
+            is_custom: bool,
+            base_disc: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            primary_path = next((f for f in folders if os.path.isdir(f)), folders[0])
+            norm_preset = preset if preset in _VALID_PERMISSION_PRESETS else "inherit"
+            norm_wt = wt_mode if wt_mode in _VALID_WORKTREE_MODES else "local"
+
+            if base_disc is not None and len(folders) == 1 and os.path.normcase(folders[0]) == os.path.normcase(base_disc["path"]):
+                git_branch = base_disc.get("gitBranch")
+                dirty_count = int(base_disc.get("dirtyCount") or 0)
+                conv_count = int(base_disc.get("conversationCount") or 0)
+                last_mod = float(base_disc.get("lastModifiedAt") or 0.0)
+            else:
+                primary_key = os.path.normcase(_win32_full_path(primary_path)) if os.path.isdir(primary_path) else ""
+                if primary_key in disc_by_path:
+                    git_branch = disc_by_path[primary_key].get("gitBranch")
+                elif os.path.isdir(primary_path):
+                    git_branch, _ = self._probe_git_for_dir(Path(primary_path))
+                else:
+                    git_branch = None
+
+                dirty_count = 0
+                for folder in folders:
+                    f_key = os.path.normcase(_win32_full_path(folder)) if os.path.isdir(folder) else ""
+                    if f_key in disc_by_path:
+                        dirty_count += int(disc_by_path[f_key].get("dirtyCount") or 0)
+                    elif os.path.isdir(folder):
+                        _, d_cnt = self._probe_git_for_dir(Path(folder))
+                        dirty_count += d_cnt
+
+                convs = _get_top_convs()
+                matching = [
+                    c
+                    for c in convs
+                    if any(
+                        self._path_matches_project(wp, folder)
+                        for wp in (c.get("workspacePaths") or [])
+                        for folder in folders
+                    )
+                ]
+                conv_count = len(matching)
+                if matching:
+                    last_mod = max(float(c.get("lastModifiedAt") or 0.0) for c in matching)
+                else:
+                    mtimes: list[float] = []
+                    for folder in folders:
+                        try:
+                            if os.path.isdir(folder):
+                                mtimes.append(float(Path(folder).stat().st_mtime))
+                        except OSError:
+                            pass
+                    last_mod = max(mtimes) if mtimes else 0.0
+
+            return {
+                "id": proj_id,
+                "name": name,
+                "path": primary_path,
+                "folders": folders,
+                "permissionPreset": norm_preset,
+                "defaultWorktreeMode": norm_wt,
+                "isCustom": is_custom,
+                "gitBranch": git_branch,
+                "dirtyCount": dirty_count,
+                "conversationCount": conv_count,
+                "lastModifiedAt": last_mod,
+            }
+
+        merged: list[dict[str, Any]] = []
+        handled_ids: set[str] = set()
+
+        for dp in discovered:
+            pid = dp["id"]
+            handled_ids.add(pid)
+            cfg = configs.get(pid)
+            if not cfg:
+                merged.append(dp)
+                continue
+            raw_f = cfg.get("folders") if isinstance(cfg.get("folders"), list) and cfg.get("folders") else [dp["path"]]
+            folders = self._normalize_folder_list(raw_f) or [dp["path"]]
+            merged.append(
+                _build_merged_entry(
+                    proj_id=pid,
+                    name=str(cfg.get("name") or dp["name"]).strip() or dp["name"],
+                    folders=folders,
+                    preset=str(cfg.get("permissionPreset") or "inherit").strip().lower(),
+                    wt_mode=str(cfg.get("defaultWorktreeMode") or "local").strip().lower(),
+                    is_custom=bool(cfg.get("isCustom", False)),
+                    base_disc=dp,
+                )
+            )
+
+        for cfg_id, cfg in configs.items():
+            if cfg_id in handled_ids:
+                continue
+            raw_f = cfg.get("folders") if isinstance(cfg.get("folders"), list) and cfg.get("folders") else (
+                [cfg["path"]] if cfg.get("path") else []
+            )
+            folders = self._normalize_folder_list(raw_f)
+            if not folders:
+                continue
+            primary = next((f for f in folders if os.path.isdir(f)), folders[0])
+            name = str(cfg.get("name") or Path(primary).name or cfg_id).strip()
+            merged.append(
+                _build_merged_entry(
+                    proj_id=cfg_id,
+                    name=name,
+                    folders=folders,
+                    preset=str(cfg.get("permissionPreset") or "inherit").strip().lower(),
+                    wt_mode=str(cfg.get("defaultWorktreeMode") or "local").strip().lower(),
+                    is_custom=bool(cfg.get("isCustom", True)),
+                    base_disc=disc_by_id.get(cfg_id),
+                )
+            )
+
+        merged.sort(key=lambda p: float(p["lastModifiedAt"]), reverse=True)
+        return merged
+
+    def upsert_configured_project(self, db: Any, payload: dict[str, Any]) -> dict[str, Any]:
+        """Create or update a multi-folder project config and per-project permission preset."""
+        if db is not None:
+            self._last_db = db
+        if not isinstance(payload, dict):
+            raise ValueError("payload must be a JSON object")
+
+        configs = self._load_project_configs(db)
+        discovered = self.discover_real_projects()
+        disc_by_id = {p["id"]: p for p in discovered}
+        disc_by_path = {os.path.normcase(_win32_full_path(p["path"])): p for p in discovered}
+
+        proj_id = str(payload.get("id") or payload.get("projectId") or "").strip()
+        raw_folders_in = payload.get("folders") if isinstance(payload.get("folders"), list) else None
+        raw_path_in = str(payload.get("path") or "").strip()
+
+        if not proj_id and raw_path_in:
+            norm_p = os.path.normcase(_win32_full_path(raw_path_in) if os.path.isdir(raw_path_in) else os.path.normpath(raw_path_in))
+            if norm_p in disc_by_path:
+                proj_id = disc_by_path[norm_p]["id"]
+
+        if not proj_id:
+            raw_name = str(payload.get("name") or "").strip()
+            if not raw_name:
+                first_f = (str(raw_folders_in[0]).strip() if raw_folders_in else "") or raw_path_in
+                if first_f:
+                    raw_name = Path(first_f).name
+            if not raw_name:
+                raise ValueError("Project id or name is required")
+            base_slug = slugify(raw_name)
+            proj_id = base_slug if (base_slug in configs or base_slug not in disc_by_id) else f"{base_slug}-{uuid.uuid4().hex[:6]}"
+
+        existing_cfg = configs.get(proj_id, {})
+        disc_proj = disc_by_id.get(proj_id)
+
+        if raw_folders_in is not None:
+            candidate_folders = self._normalize_folder_list(raw_folders_in)
+        elif raw_path_in:
+            candidate_folders = self._normalize_folder_list([raw_path_in])
+        elif existing_cfg.get("folders"):
+            candidate_folders = self._normalize_folder_list(existing_cfg["folders"])
+        elif disc_proj:
+            candidate_folders = [disc_proj["path"]]
+        else:
+            candidate_folders = []
+
+        if not candidate_folders:
+            raise ValueError("At least one project folder path is required")
+
+        primary_path = next((f for f in candidate_folders if os.path.isdir(f)), candidate_folders[0])
+        name = str(
+            payload.get("name")
+            or existing_cfg.get("name")
+            or (disc_proj["name"] if disc_proj else Path(primary_path).name)
+            or proj_id
+        ).strip()
+
+        preset = str(
+            payload.get("permissionPreset")
+            or existing_cfg.get("permissionPreset")
+            or "inherit"
+        ).strip().lower()
+        if preset not in _VALID_PERMISSION_PRESETS:
+            raise ValueError(f"Invalid permissionPreset: {preset!r}")
+
+        wt_mode = str(
+            payload.get("defaultWorktreeMode")
+            or payload.get("worktreeMode")
+            or existing_cfg.get("defaultWorktreeMode")
+            or "local"
+        ).strip().lower()
+        if wt_mode not in _VALID_WORKTREE_MODES:
+            raise ValueError(f"Invalid defaultWorktreeMode: {wt_mode!r}")
+
+        is_custom = bool(payload.get("isCustom", existing_cfg.get("isCustom", disc_proj is None)))
+
+        configs[proj_id] = {
+            "id": proj_id,
+            "name": name,
+            "path": primary_path,
+            "folders": candidate_folders,
+            "permissionPreset": preset,
+            "defaultWorktreeMode": wt_mode,
+            "isCustom": is_custom,
+            "updatedAt": time.time(),
+        }
+
+        effective_db = db if db is not None else self._last_db
+        if effective_db is not None and hasattr(effective_db, "set_kv"):
+            effective_db.set_kv("agy_project_configs", configs)
+
+        merged_list = self.get_merged_projects(effective_db)
+        matched = next((p for p in merged_list if p["id"] == proj_id), None)
+        if matched is not None:
+            return matched
+        return {
+            "id": proj_id,
+            "name": name,
+            "path": primary_path,
+            "folders": candidate_folders,
+            "permissionPreset": preset,
+            "defaultWorktreeMode": wt_mode,
+            "isCustom": is_custom,
+            "gitBranch": None,
+            "dirtyCount": 0,
+            "conversationCount": 0,
+            "lastModifiedAt": time.time(),
+        }
+
+    def delete_configured_project(self, db: Any, project_id: str) -> bool:
+        """Delete a configured project override or custom multi-folder project by id."""
+        if db is not None:
+            self._last_db = db
+        pid = (project_id or "").strip()
+        effective_db = db if db is not None else self._last_db
+        if not pid or effective_db is None or not hasattr(effective_db, "get_kv"):
+            return False
+        configs = self._load_project_configs(effective_db)
+        if pid not in configs:
+            return False
+        configs.pop(pid, None)
+        if hasattr(effective_db, "set_kv"):
+            effective_db.set_kv("agy_project_configs", configs)
+        return True
+
+    def resolve_project_preset_for_cwd(self, db: Any, cwd: str | None) -> str | None:
+        """Return the effective non-inherited permissionPreset for a given working directory."""
+        if not cwd or not str(cwd).strip():
+            return None
+        target_cwd = str(cwd).strip()
+        best_preset: str | None = None
+        best_len = -1
+        for proj in self.get_merged_projects(db):
+            preset = str(proj.get("permissionPreset") or "inherit").strip().lower()
+            if preset == "inherit" or preset not in _VALID_PERMISSION_PRESETS:
+                continue
+            for folder in proj.get("folders") or [proj["path"]]:
+                if self._path_matches_project(target_cwd, folder):
+                    f_len = len(os.path.abspath(folder))
+                    if f_len > best_len:
+                        best_len = f_len
+                        best_preset = preset
+        return best_preset
 
     def list_conversations(
         self,
@@ -620,6 +1001,175 @@ class AntigravityDesktopBridge:
                     return artifacts
         return artifacts
 
+    def _annotate_subagent_tail(self, sub_summary: dict[str, Any]) -> dict[str, Any]:
+        item = dict(sub_summary)
+        sub_id = str(item.get("id") or "").strip()
+        latest_message: str | None = None
+        last_step_type: str | None = None
+        if sub_id:
+            transcript_path = self.agy_dir / "brain" / sub_id / ".system_generated" / "logs" / "transcript.jsonl"
+            if transcript_path.is_file():
+                try:
+                    raw_lines = transcript_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                    for raw_line in reversed(raw_lines[-80:]):
+                        line = raw_line.strip()
+                        if not line:
+                            continue
+                        try:
+                            obj = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if not isinstance(obj, dict):
+                            continue
+                        st = str(obj.get("type") or "").strip()
+                        src = str(obj.get("source") or "").strip()
+                        if st in ("EPHEMERAL_MESSAGE", "CHECKPOINT") or src == "SYSTEM_SDK":
+                            continue
+                        if last_step_type is None and st:
+                            last_step_type = st
+                        raw_txt = str(obj.get("content") or obj.get("thinking") or "").strip()
+                        if raw_txt:
+                            if st == "USER_INPUT" or src == "USER_EXPLICIT":
+                                raw_txt = _clean_user_content(raw_txt)
+                            elif st == "GENERIC":
+                                raw_txt = _GENERIC_TIMESTAMP_PREFIX_RE.sub("", raw_txt).strip()
+                            if raw_txt:
+                                red_txt, _ = self.redactor.redact(raw_txt)
+                                latest_message = red_txt[:280]
+                                break
+                except OSError:
+                    pass
+        item["latestMessage"] = latest_message
+        item["lastStepType"] = last_step_type
+        return item
+
+    def _read_swarm_files(
+        self,
+        conv_dir: Path,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, list[dict[str, Any]]]:
+        swarm_dir = conv_dir / ".system_generated" / "swarm"
+        if not swarm_dir.is_dir():
+            return None, None, []
+
+        swarm_plan: dict[str, Any] | None = None
+        plan_path = swarm_dir / "plan.json"
+        if plan_path.is_file():
+            try:
+                loaded_plan = json.loads(plan_path.read_text(encoding="utf-8", errors="replace"))
+                if isinstance(loaded_plan, dict):
+                    swarm_plan = self.redactor.redact_dict(loaded_plan)
+            except (OSError, json.JSONDecodeError):
+                swarm_plan = None
+
+        swarm_meta: dict[str, Any] | None = None
+        for meta_name in ("swarm.json", "members.json"):
+            m_path = swarm_dir / meta_name
+            if m_path.is_file():
+                try:
+                    loaded_m = json.loads(m_path.read_text(encoding="utf-8", errors="replace"))
+                    if isinstance(loaded_m, dict):
+                        red_m = self.redactor.redact_dict(loaded_m)
+                        swarm_meta = {**(swarm_meta or {}), **red_m}
+                except (OSError, json.JSONDecodeError):
+                    pass
+
+        board_messages: list[dict[str, Any]] = []
+        seen_msgs: set[tuple[int, str, str]] = set()
+
+        def _append_msg_obj(obj: Any) -> None:
+            if not isinstance(obj, dict):
+                return
+            raw_txt = str(obj.get("text") or obj.get("content") or obj.get("message") or "").strip()
+            if not raw_txt:
+                return
+            red_txt, _ = self.redactor.redact(raw_txt)
+            seq_raw = obj.get("seq")
+            seq_val = int(seq_raw) if isinstance(seq_raw, int) else (len(board_messages) + 1)
+            agent_val = str(obj.get("agent") or obj.get("sender") or obj.get("author") or "agent").strip()
+            time_val = str(obj.get("time") or obj.get("timestamp") or obj.get("created_at") or "").strip()
+            kind_val = str(obj.get("kind") or "message").strip()
+            dedup_key = (seq_val, agent_val, red_txt)
+            if dedup_key in seen_msgs:
+                return
+            seen_msgs.add(dedup_key)
+            board_messages.append(
+                {
+                    "seq": seq_val,
+                    "agent": agent_val,
+                    "text": red_txt,
+                    "time": time_val,
+                    "kind": kind_val,
+                }
+            )
+
+        try:
+            swarm_files = sorted(swarm_dir.iterdir(), key=lambda p: p.name.lower())
+        except OSError:
+            swarm_files = []
+
+        for fpath in swarm_files:
+            if not fpath.is_file():
+                continue
+            low = fpath.name.lower()
+            if low.endswith(".jsonl") and (low.startswith("board") or low.startswith("message")):
+                try:
+                    for line in fpath.read_text(encoding="utf-8", errors="replace").splitlines():
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            _append_msg_obj(json.loads(line))
+                        except json.JSONDecodeError:
+                            continue
+                except OSError:
+                    continue
+            elif low.endswith(".json") and (
+                low.startswith("board")
+                or low.startswith("message")
+                or low in ("swarm.json", "plan.json")
+            ):
+                try:
+                    loaded = json.loads(fpath.read_text(encoding="utf-8", errors="replace"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if isinstance(loaded, list):
+                    for item in loaded:
+                        _append_msg_obj(item)
+                elif isinstance(loaded, dict):
+                    for list_key in ("messages", "board", "boardMessages"):
+                        candidate_list = loaded.get(list_key)
+                        if isinstance(candidate_list, list):
+                            for item in candidate_list:
+                                _append_msg_obj(item)
+
+        board_messages.sort(key=lambda m: int(m.get("seq") or 0))
+        return swarm_plan, swarm_meta, board_messages[-200:]
+
+    def get_swarm_detail(self, conversation_id: str) -> dict[str, Any]:
+        cid = self.validate_conversation_id(conversation_id)
+        all_convs = self._all_conversations()
+        summary = next((c for c in all_convs if c["id"] == cid), None)
+        conv_dir = self.agy_dir / "brain" / cid
+        if summary is None and not conv_dir.is_dir():
+            raise FileNotFoundError(f"Conversation '{cid}' not found")
+
+        subagents = [
+            self._annotate_subagent_tail(c)
+            for c in all_convs
+            if c.get("parentConversationId") == cid
+        ]
+        swarm_plan, swarm_meta, board_messages = self._read_swarm_files(conv_dir)
+
+        return {
+            "ok": True,
+            "conversationId": cid,
+            "hasSwarm": bool(swarm_plan or swarm_meta or board_messages or subagents),
+            "swarmPlan": swarm_plan,
+            "swarmMeta": swarm_meta,
+            "boardMessages": board_messages,
+            "subagents": subagents,
+        }
+
     def get_conversation_detail(self, conversation_id: str, limit: int = 150) -> dict[str, Any]:
         cid = self.validate_conversation_id(conversation_id)
         all_convs = self._all_conversations()
@@ -643,31 +1193,28 @@ class AntigravityDesktopBridge:
                 "hasSwarm": self._has_swarm(cid),
             }
 
-        subagents = [c for c in all_convs if c.get("parentConversationId") == cid]
+        subagents = [
+            self._annotate_subagent_tail(c)
+            for c in all_convs
+            if c.get("parentConversationId") == cid
+        ]
         artifacts = self._collect_brain_artifacts(conv_dir)
-
-        swarm_plan: dict[str, Any] | None = None
-        plan_path = conv_dir / ".system_generated" / "swarm" / "plan.json"
-        if plan_path.is_file():
-            try:
-                loaded_plan = json.loads(plan_path.read_text(encoding="utf-8", errors="replace"))
-                if isinstance(loaded_plan, dict):
-                    swarm_plan = self.redactor.redact_dict(loaded_plan)
-            except (OSError, json.JSONDecodeError):
-                swarm_plan = None
+        swarm_plan, _swarm_meta, board_messages = self._read_swarm_files(conv_dir)
 
         transcript_path = conv_dir / ".system_generated" / "logs" / "transcript.jsonl"
         messages: list[dict[str, Any]] = []
         if transcript_path.is_file():
             messages = self._parse_transcript_messages(cid, transcript_path, limit=limit)
 
-        return {
+        detail: dict[str, Any] = {
             "conversation": summary,
             "messages": messages,
             "artifacts": artifacts,
             "subagents": subagents,
             "swarmPlan": swarm_plan,
+            "boardMessages": board_messages,
         }
+        return detail
 
     def _parse_transcript_messages(
         self,
@@ -733,6 +1280,7 @@ class AntigravityDesktopBridge:
                         if field_name in full_obj:
                             item[field_name] = full_obj[field_name]
 
+        conv_dir_norm = str(self.agy_dir / "brain" / cid).replace("\\", "/").lower()
         messages: list[dict[str, Any]] = []
         for idx, (obj, generic_objs) in enumerate(selected_groups):
             step_idx = obj.get("step_index")
@@ -788,11 +1336,22 @@ class AntigravityDesktopBridge:
 
             raw_tool_calls = obj.get("tool_calls") if isinstance(obj.get("tool_calls"), list) else []
             tool_calls: list[dict[str, Any]] = []
+            pending_questions: list[dict[str, Any]] = []
+            plan_review: dict[str, Any] | None = None
+
             for tc in raw_tool_calls:
                 if not isinstance(tc, dict):
                     continue
                 tc_name = str(tc.get("name") or tc.get("toolName") or "tool")
                 tc_args = tc.get("args") if "args" in tc else tc.get("arguments")
+                if isinstance(tc_args, str):
+                    try:
+                        parsed_tc_args = json.loads(tc_args)
+                        if isinstance(parsed_tc_args, dict):
+                            tc_args = parsed_tc_args
+                    except json.JSONDecodeError:
+                        pass
+
                 summary_str, args_preview = _summarize_tool_call(tc_name, tc_args)
                 red_summary, _ = self.redactor.redact(summary_str)
                 red_args_preview = (
@@ -806,6 +1365,78 @@ class AntigravityDesktopBridge:
                         "outputPreview": None,
                     }
                 )
+
+                tc_low = tc_name.lower()
+                if (tc_low == "ask_question" or tc_low.endswith("ask_question")) and isinstance(tc_args, dict):
+                    raw_qs = tc_args.get("questions")
+                    if isinstance(raw_qs, list):
+                        for q in raw_qs:
+                            if not isinstance(q, dict):
+                                continue
+                            q_text, _ = self.redactor.redact(str(q.get("question") or "").strip())
+                            if not q_text:
+                                continue
+                            raw_opts = q.get("options") if isinstance(q.get("options"), list) else []
+                            red_opts = [
+                                self.redactor.redact(str(opt).strip())[0]
+                                for opt in raw_opts
+                                if str(opt).strip()
+                            ]
+                            is_multi = bool(q.get("is_multi_select") or q.get("isMultiSelect") or False)
+                            q_entry: dict[str, Any] = {
+                                "question": q_text,
+                                "options": red_opts,
+                                "is_multi_select": is_multi,
+                                "isMultiSelect": is_multi,
+                            }
+                            if q.get("header"):
+                                q_entry["header"] = self.redactor.redact(str(q["header"]).strip())[0]
+                            pending_questions.append(q_entry)
+
+                elif (tc_low == "exit_plan_mode" or tc_low.endswith("exit_plan_mode")) and isinstance(tc_args, dict):
+                    raw_plan = str(tc_args.get("plan") or "").strip()
+                    if raw_plan:
+                        red_plan, _ = self.redactor.redact(raw_plan)
+                        raw_title = str(tc_args.get("title") or "").strip()
+                        if not raw_title:
+                            first_ln = red_plan.splitlines()[0].lstrip("# ").strip()
+                            raw_title = first_ln[:80] if first_ln else "Implementation Plan"
+                        red_title, _ = self.redactor.redact(raw_title)
+                        art_path = str(tc_args.get("artifactPath") or tc_args.get("path") or "").strip() or None
+                        plan_review = {
+                            "title": red_title or "Implementation Plan",
+                            "summary": red_plan,
+                            "artifactPath": art_path,
+                            "canProceed": True,
+                        }
+
+                elif (tc_low.endswith("write_file") or tc_low.endswith("edit_file")) and isinstance(tc_args, dict):
+                    art_meta = tc_args.get("ArtifactMetadata") or tc_args.get("artifactMetadata")
+                    if isinstance(art_meta, dict) and (
+                        art_meta.get("RequestFeedback") is True or art_meta.get("requestFeedback") is True
+                    ):
+                        raw_sum = str(
+                            art_meta.get("Summary")
+                            or art_meta.get("summary")
+                            or tc_args.get("Content")
+                            or ""
+                        ).strip()
+                        red_sum, _ = self.redactor.redact(raw_sum)
+                        raw_p = str(tc_args.get("Path") or tc_args.get("path") or "").strip()
+                        norm_p = raw_p.replace("\\", "/")
+                        if norm_p.lower().startswith(conv_dir_norm + "/"):
+                            art_rel: str | None = norm_p[len(conv_dir_norm) + 1 :]
+                        elif norm_p:
+                            art_rel = Path(norm_p).name
+                        else:
+                            art_rel = None
+                        red_title, _ = self.redactor.redact(art_rel or "Implementation Plan")
+                        plan_review = {
+                            "title": red_title,
+                            "summary": red_sum,
+                            "artifactPath": art_rel,
+                            "canProceed": True,
+                        }
 
             # Attach GENERIC outputs as short previews on toolCalls
             if generic_objs and tool_calls:
@@ -826,18 +1457,21 @@ class AntigravityDesktopBridge:
             if not red_content and not red_thinking and not tool_calls:
                 continue
 
-            messages.append(
-                {
-                    "id": f"{cid}-step-{step_index_int}",
-                    "stepIndex": step_index_int,
-                    "role": "assistant",
-                    "content": red_content,
-                    "thinking": red_thinking,
-                    "model": str(obj["model"]) if obj.get("model") else None,
-                    "toolCalls": tool_calls,
-                    "createdAt": created_at,
-                }
-            )
+            msg_entry: dict[str, Any] = {
+                "id": f"{cid}-step-{step_index_int}",
+                "stepIndex": step_index_int,
+                "role": "assistant",
+                "content": red_content,
+                "thinking": red_thinking,
+                "model": str(obj["model"]) if obj.get("model") else None,
+                "toolCalls": tool_calls,
+                "createdAt": created_at,
+            }
+            if pending_questions:
+                msg_entry["pendingQuestions"] = pending_questions
+            if plan_review is not None:
+                msg_entry["planReview"] = plan_review
+            messages.append(msg_entry)
 
         return messages
 
@@ -892,21 +1526,118 @@ class AntigravityDesktopBridge:
             "dataUri": None,
         }
 
-    def _resolve_allowed_project(self, project_path: str) -> tuple[int, Path | None, str]:
+    def _resolve_allowed_project(
+        self,
+        project_path: str,
+        db: Any = None,
+    ) -> tuple[int, Path | None, str]:
         raw = (project_path or "").strip()
         if not raw:
             return 400, None, "projectPath is required"
         if not os.path.isdir(raw):
             return 404, None, f"Project directory not found: {raw}"
 
-        target_norm = os.path.normcase(_win32_full_path(raw))
-        allowed = {
-            os.path.normcase(_win32_full_path(p["path"])): Path(p["path"])
-            for p in self.discover_real_projects()
+        target_full = _win32_full_path(raw)
+        target_norm = os.path.normcase(target_full)
+
+        allowed: dict[str, Path] = {}
+        for p in self.discover_real_projects():
+            for f_path in [p["path"], *(p.get("folders") or [])]:
+                if f_path and os.path.isdir(f_path):
+                    full_f = _win32_full_path(f_path)
+                    allowed[os.path.normcase(full_f)] = Path(full_f)
+
+        for cfg in self._load_project_configs(db).values():
+            for f_path in [cfg.get("path"), *(cfg.get("folders") or [])]:
+                if isinstance(f_path, str) and f_path.strip() and os.path.isdir(f_path):
+                    full_f = _win32_full_path(f_path)
+                    allowed[os.path.normcase(full_f)] = Path(full_f)
+
+        if target_norm in allowed:
+            return 200, allowed[target_norm], ""
+
+        # Accept .0g-worktrees/* paths under any allowed project root
+        for allowed_path in allowed.values():
+            wt_root = os.path.join(str(allowed_path), ".0g-worktrees")
+            wt_root_norm = os.path.normcase(_win32_full_path(wt_root))
+            try:
+                if os.path.commonpath([wt_root_norm, target_norm]) == wt_root_norm and target_norm != wt_root_norm:
+                    return 200, Path(target_full), ""
+            except ValueError:
+                continue
+
+        return 403, None, "projectPath is not an allowed Antigravity project directory"
+
+    def save_workspace_upload(
+        self,
+        project_path: str,
+        filename: str,
+        data_base64: str,
+        db: Any = None,
+    ) -> tuple[int, dict[str, Any]]:
+        """Validate and save a base64-encoded user upload inside <project>/.antigravity_uploads/."""
+        status, proj_dir, err = self._resolve_allowed_project(project_path, db=db)
+        if proj_dir is None:
+            return status, {"detail": err}
+
+        raw_filename = (filename or "").strip()
+        base_name = Path(raw_filename.replace("\\", "/")).name.strip()
+        if not raw_filename or not base_name or base_name in (".", ".."):
+            return 400, {"detail": "filename is required"}
+
+        safe_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", base_name).strip(" .")
+        if not safe_name:
+            return 400, {"detail": "Invalid filename"}
+
+        if _is_secret_relpath(base_name) or _is_secret_relpath(safe_name):
+            return 403, {"detail": "Uploading secret or credential files is forbidden"}
+
+        raw_ext = Path(base_name).suffix.lower()
+        safe_ext = Path(safe_name).suffix.lower()
+        if raw_ext in _DANGEROUS_UPLOAD_EXTS or safe_ext in _DANGEROUS_UPLOAD_EXTS:
+            return 403, {"detail": f"Uploading executable file extension '{raw_ext or safe_ext}' is forbidden"}
+
+        raw_b64 = (data_base64 or "").strip()
+        if not raw_b64:
+            return 400, {"detail": "dataBase64 is required"}
+        if raw_b64.lower().startswith("data:") and "," in raw_b64:
+            raw_b64 = raw_b64.split(",", 1)[1].strip()
+
+        compact_b64 = re.sub(r"\s+", "", raw_b64)
+        if not compact_b64:
+            return 400, {"detail": "Empty base64 payload"}
+        rem = len(compact_b64) % 4
+        if rem in (2, 3):
+            compact_b64 += "=" * (4 - rem)
+        try:
+            raw_bytes = base64.b64decode(compact_b64, validate=True)
+        except (binascii.Error, ValueError):
+            return 400, {"detail": "Invalid base64 encoding"}
+
+        if len(raw_bytes) > _MAX_UPLOAD_BYTES:
+            return 413, {"detail": f"Upload exceeds 10MB limit ({len(raw_bytes)} bytes)"}
+
+        proj_abs = _win32_full_path(str(proj_dir))
+        candidate_rel = f".antigravity_uploads/{int(time.time())}_{safe_name}"
+        ok, rel_posix, r_err = _resolve_inside_repo(proj_abs, candidate_rel, allow_dot_git=False)
+        if not ok:
+            return 403, {"detail": r_err or "Invalid upload path"}
+
+        dest = Path(proj_abs) / rel_posix
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(raw_bytes)
+        except OSError as exc:
+            return 500, {"detail": str(exc)}
+
+        return 200, {
+            "ok": True,
+            "fileName": dest.name,
+            "relPath": rel_posix,
+            "absPath": str(dest),
+            "sizeBytes": len(raw_bytes),
+            "mentionToken": f"@{rel_posix}",
         }
-        if target_norm not in allowed:
-            return 403, None, "projectPath is not an allowed Antigravity project directory"
-        return 200, allowed[target_norm], ""
 
     def list_workspace_files(self, project_path: str, rel_dir: str = "") -> tuple[int, dict[str, Any]]:
         status, proj_dir, err = self._resolve_allowed_project(project_path)
@@ -1080,14 +1811,17 @@ class AntigravityDesktopBridge:
         }
 
     def _resolve_agentapi_bin(self) -> str | None:
-        env_bin = os.environ.get("ZEROG_AGENTAPI_BIN", "").strip()
-        if env_bin:
+        if "ZEROG_AGENTAPI_BIN" in os.environ:
+            env_bin = os.environ.get("ZEROG_AGENTAPI_BIN", "").strip()
+            if not env_bin or env_bin.lower() in ("none", "false", "0", "off"):
+                return None
             p = Path(env_bin).expanduser()
             if p.is_file():
                 return str(p)
             which_env = shutil.which(env_bin)
             if which_env:
                 return which_env
+            return None
 
         local_name = "agentapi.bat" if IS_WINDOWS else "agentapi"
         local_bin = self.agy_dir / "bin" / local_name
@@ -1158,14 +1892,39 @@ class AntigravityDesktopBridge:
         model: str | None = None,
         workspace_path: str | None = None,
         db: Any = None,
+        worktree_mode: str = "local",
+        branch_name: str | None = None,
+        folders: list[str] | None = None,
+        permission_preset: str | None = None,
     ) -> dict[str, Any]:
+        if db is not None:
+            self._last_db = db
         clean_prompt = (prompt or "").strip()
         if not clean_prompt:
             raise ValueError("prompt is required")
 
         resolved_title = (title or "").strip() or clean_prompt.splitlines()[0][:72] or "New Conversation"
-        ws_clean = (workspace_path or "").strip() or None
-        full_prompt = f"[Active Workspace: {ws_clean}]\n\n{clean_prompt}" if ws_clean else clean_prompt
+        clean_folders = [str(f).strip() for f in (folders or []) if str(f).strip()]
+        ws_clean = (workspace_path or "").strip() or (clean_folders[0] if clean_folders else None)
+
+        norm_wt_mode = (worktree_mode or "local").strip().lower()
+        created_worktree_path: str | None = None
+        created_branch_name: str | None = None
+        if norm_wt_mode == "worktree" and ws_clean and self.git_manager._is_git_repo(ws_clean):
+            target_branch = (branch_name or "").strip() or f"agy-{slugify(resolved_title)[:20]}-{uuid.uuid4().hex[:4]}"
+            wt = self.git_manager.create_worktree(ws_clean, target_branch)
+            if wt.get("ok") and wt.get("worktreePath"):
+                ws_clean = str(wt["worktreePath"])
+                created_worktree_path = ws_clean
+                created_branch_name = wt.get("branchName")
+                self.invalidate_projects_cache()
+
+        header_lines: list[str] = []
+        if ws_clean:
+            header_lines.append(f"[Active Workspace: {ws_clean}]")
+        if len(clean_folders) > 1:
+            header_lines.append(f"[Active Project Folders: {', '.join(clean_folders)}]")
+        full_prompt = ("\n".join(header_lines) + f"\n\n{clean_prompt}") if header_lines else clean_prompt
 
         bin_path = self._resolve_agentapi_bin()
         if bin_path:
@@ -1179,12 +1938,18 @@ class AntigravityDesktopBridge:
 
             rc, out, _err = await self._run_agentapi(bin_path, args, timeout_sec=20.0)
             conv_id = self._extract_conversation_id(out, existing_ids) or f"agy-{uuid.uuid4().hex[:10]}"
-            return {
+            res_out: dict[str, Any] = {
                 "ok": rc == 0,
                 "conversationId": conv_id,
                 "title": resolved_title,
                 "deliveredVia": "agentapi",
             }
+            if created_worktree_path:
+                res_out["worktreePath"] = created_worktree_path
+                res_out["branchName"] = created_branch_name
+            if permission_preset:
+                res_out["permissionPreset"] = permission_preset
+            return res_out
 
         # Fallback when agentapi binary is unavailable (e.g. test environment)
         conv_id = f"agy-{uuid.uuid4().hex[:10]}"
@@ -1200,6 +1965,8 @@ class AntigravityDesktopBridge:
                 source="phone_worker",
                 status="idle",
                 cwd=ws_clean or str(Path.cwd()),
+                worktreePath=created_worktree_path,
+                worktreeBranch=created_branch_name,
                 stepIdx=0,
                 createdAt=now,
                 updatedAt=now,
@@ -1208,12 +1975,18 @@ class AntigravityDesktopBridge:
             red_prompt, _ = self.redactor.redact(full_prompt)
             db.queue_steering(conv_id, red_prompt)
             db.emit_event("session.created", sess.model_dump(), session_id=conv_id, provider="antigravity")
-        return {
+        fallback_out: dict[str, Any] = {
             "ok": True,
             "conversationId": conv_id,
             "title": resolved_title,
             "deliveredVia": "steering_queue",
         }
+        if created_worktree_path:
+            fallback_out["worktreePath"] = created_worktree_path
+            fallback_out["branchName"] = created_branch_name
+        if permission_preset:
+            fallback_out["permissionPreset"] = permission_preset
+        return fallback_out
 
     async def send_conversation_message(
         self,
@@ -1221,6 +1994,8 @@ class AntigravityDesktopBridge:
         message: str,
         db: Any = None,
     ) -> dict[str, Any]:
+        if db is not None:
+            self._last_db = db
         cid = self.validate_conversation_id(conversation_id)
         clean_msg = (message or "").strip()
         if not clean_msg:
@@ -1248,3 +2023,16 @@ class AntigravityDesktopBridge:
             "conversationId": cid,
             "deliveredVia": "steering_queue",
         }
+
+    async def nudge_agent(
+        self,
+        conversation_id: str,
+        message: str,
+        db: Any = None,
+    ) -> dict[str, Any]:
+        """Nudge an active conversation or swarm subagent by sending a direct message."""
+        return await self.send_conversation_message(
+            conversation_id=conversation_id,
+            message=message,
+            db=db,
+        )

@@ -9,6 +9,7 @@ import {
   Lock,
   MonitorOff,
   Radio,
+  Shield,
   ShieldAlert,
   Smartphone,
   Unlock,
@@ -16,13 +17,26 @@ import {
   Zap,
 } from "lucide-react";
 import { useZeroG } from "../lib/store";
-import type { PowerGear, TunnelBackend } from "../types/contracts";
+import type {
+  PermissionPreset,
+  PowerGear,
+  TunnelBackend,
+} from "../types/contracts";
 import { QrSvg } from "./QrSvg";
 
 const GEAR_OPTIONS: Array<{ id: PowerGear; label: string }> = [
   { id: "ultra_sip", label: "Ultra-Sip" },
   { id: "auto_turbo", label: "Auto-Turbo" },
   { id: "balanced", label: "Balanced" },
+  { id: "max_turbo", label: "Max Turbo" },
+  { id: "low_battery_guard", label: "Low-Batt Guard" },
+];
+
+const PRESET_OPTIONS: Array<{ id: PermissionPreset; label: string }> = [
+  { id: "request_review", label: "Request Review" },
+  { id: "default", label: "Default" },
+  { id: "auto", label: "Auto" },
+  { id: "turbo", label: "Turbo" },
 ];
 
 export const AuxPaneView: React.FC = () => {
@@ -36,8 +50,8 @@ export const AuxPaneView: React.FC = () => {
     approvals,
     agyConversations,
     agyProjects,
-    agentGateMode,
-    setAgentGateMode,
+    permissionPreset,
+    setPermissionPreset,
     updatePowerGear,
     panicLock,
     unlockHost,
@@ -87,7 +101,7 @@ export const AuxPaneView: React.FC = () => {
   const isLocked = Boolean(hostGlance?.hostLocked);
 
   return (
-    <main className="mx-auto w-full max-w-[420px] px-3 py-3 space-y-3">
+    <main className="mx-auto w-full max-w-[440px] px-3 py-3 space-y-3 overflow-y-auto flex-1">
       {apiError && (
         <div
           role="alert"
@@ -110,7 +124,10 @@ export const AuxPaneView: React.FC = () => {
       )}
 
       {/* 1. Tunnel & QR Pairing Card */}
-      <section className="surface-card p-3.5 space-y-3" aria-label="Tunnel & QR Pairing">
+      <section
+        className="surface-card p-3.5 space-y-3"
+        aria-label="Tunnel & QR Pairing"
+      >
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <Radio
@@ -137,7 +154,8 @@ export const AuxPaneView: React.FC = () => {
                   : "var(--text-muted)",
             }}
           >
-            {tunnelStatus?.backend || "local"} · {tunnelStatus?.status || "stopped"}
+            {tunnelStatus?.backend || "local"} ·{" "}
+            {tunnelStatus?.status || "stopped"}
           </span>
         </div>
 
@@ -158,7 +176,11 @@ export const AuxPaneView: React.FC = () => {
             className="btn-secondary !px-3 shrink-0"
             aria-label="Copy tunnel URL"
           >
-            {copiedUrl ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+            {copiedUrl ? (
+              <Check className="w-4 h-4" />
+            ) : (
+              <Copy className="w-4 h-4" />
+            )}
           </button>
         </div>
 
@@ -167,7 +189,7 @@ export const AuxPaneView: React.FC = () => {
             value={qrTarget}
             svgHtml={pairingCode?.qrSvg || tunnelStatus?.qrSvg}
             size={112}
-            label="0G Mobile Pairing QR"
+            label="Antigravity Mobile Pairing QR"
           />
           <div className="flex-1 min-w-0 space-y-2">
             <button
@@ -177,7 +199,7 @@ export const AuxPaneView: React.FC = () => {
               className="btn-primary w-full text-xs"
             >
               <KeyRound className="w-4 h-4" />
-              {busyCode ? "Generating..." : "New 6-Digit Code"}
+              {busyCode ? "Generating…" : "New 6-Digit Code"}
             </button>
             {pairingCode?.code ? (
               <div
@@ -187,7 +209,10 @@ export const AuxPaneView: React.FC = () => {
                 {pairingCode.code}
               </div>
             ) : (
-              <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+              <p
+                className="text-[11px]"
+                style={{ color: "var(--text-muted)" }}
+              >
                 Scan QR or generate a 6-digit code to pair your phone.
               </p>
             )}
@@ -220,98 +245,104 @@ export const AuxPaneView: React.FC = () => {
             Stop
           </button>
         </div>
-
-        {tunnelStatus?.installHint && tunnelStatus.status === "missing_binary" && (
-          <p className="text-[11px] font-mono break-all" style={{ color: "var(--status-warning)" }}>
-            Install: {tunnelStatus.installHint}
-          </p>
-        )}
       </section>
 
-      {/* 2. Backpack Power Governor Card */}
-      <section className="surface-card p-3.5 space-y-2.5" aria-label="Backpack Power Governor">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            {hostGlance?.acPluggedIn ? (
-              <BatteryCharging className="w-4 h-4" style={{ color: "var(--status-success)" }} />
-            ) : (
-              <Battery className="w-4 h-4" style={{ color: "var(--status-warning)" }} />
-            )}
-            <h2 className="font-display text-sm font-bold">Backpack Power Governor</h2>
+      {/* 2. Permission Presets + Backpack Power Governor */}
+      <section
+        className="surface-card p-3.5 space-y-3"
+        aria-label="Permissions and Power"
+      >
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1.5 text-xs font-semibold">
+            <Shield
+              className="w-4 h-4"
+              style={{ color: "var(--accent-primary)" }}
+            />
+            <span>Antigravity Permission Preset</span>
           </div>
-          <span className="font-mono text-xs tabular-nums font-semibold">
-            {hostGlance?.batteryPercent ?? "--"}% ·{" "}
-            {hostGlance?.acPluggedIn ? "AC" : "DC"}
-          </span>
+          <div className="grid grid-cols-2 gap-1.5">
+            {PRESET_OPTIONS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => void setPermissionPreset(p.id)}
+                className={
+                  permissionPreset === p.id
+                    ? "btn-primary !px-2 text-xs"
+                    : "btn-secondary !px-2 text-xs"
+                }
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="flex items-center justify-between text-xs" style={{ color: "var(--text-muted)" }}>
-          <span>
-            Mode:{" "}
-            <strong style={{ color: "var(--text-primary)" }}>
-              {hostGlance?.powerGear || "ultra_sip"}
-            </strong>
-          </span>
-          <span>
-            Keep-Awake:{" "}
-            <strong style={{ color: "var(--accent-primary)" }}>
-              {hostGlance?.keepAwakeActive ? "S0 Ready" : "Idle"}
-            </strong>
-          </span>
-        </div>
-
-        <div className="grid grid-cols-3 gap-1.5">
-          {GEAR_OPTIONS.map((g) => (
-            <button
-              key={g.id}
-              type="button"
-              onClick={() =>
-                void updatePowerGear({
-                  gear: g.id,
-                  autoGovernorEnabled: g.id === "auto_turbo",
-                })
-              }
-              className={
-                hostGlance?.powerGear === g.id ? "btn-primary !px-2 text-xs" : "btn-secondary !px-2 text-xs"
-              }
-            >
-              <Zap className="w-3.5 h-3.5" />
-              {g.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="grid grid-cols-2 gap-1.5 pt-1 border-t" style={{ borderColor: "var(--border-default)" }}>
-          <button
-            type="button"
-            onClick={() => void setAgentGateMode("ask_on_phone")}
-            className={agentGateMode === "ask_on_phone" ? "btn-primary !px-2 text-xs" : "btn-secondary !px-2 text-xs"}
-          >
-            Ask on Phone
-          </button>
-          <button
-            type="button"
-            onClick={() => void setAgentGateMode("agent_turbo")}
-            className={agentGateMode === "agent_turbo" ? "btn-primary !px-2 text-xs" : "btn-secondary !px-2 text-xs"}
-          >
-            Agent Turbo
-          </button>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => void updatePowerGear({ displayOff: true })}
-          className="btn-secondary w-full text-xs"
+        <div
+          className="pt-2.5 border-t space-y-2"
+          style={{ borderColor: "var(--border-default)" }}
         >
-          <MonitorOff className="w-4 h-4" />
-          Turn Laptop Display Off (Backpack Safe)
-        </button>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              {hostGlance?.acPluggedIn ? (
+                <BatteryCharging
+                  className="w-4 h-4"
+                  style={{ color: "var(--status-success)" }}
+                />
+              ) : (
+                <Battery
+                  className="w-4 h-4"
+                  style={{ color: "var(--status-warning)" }}
+                />
+              )}
+              <h2 className="font-display text-sm font-bold">
+                Backpack Power Governor
+              </h2>
+            </div>
+            <span className="font-mono text-xs tabular-nums font-semibold">
+              {hostGlance?.batteryPercent ?? "--"}% ·{" "}
+              {hostGlance?.acPluggedIn ? "AC" : "DC"}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-1.5">
+            {GEAR_OPTIONS.map((g) => (
+              <button
+                key={g.id}
+                type="button"
+                onClick={() =>
+                  void updatePowerGear({
+                    gear: g.id,
+                    autoGovernorEnabled: g.id === "auto_turbo",
+                  })
+                }
+                className={
+                  hostGlance?.powerGear === g.id
+                    ? "btn-primary !px-2 text-xs"
+                    : "btn-secondary !px-2 text-xs"
+                }
+              >
+                <Zap className="w-3.5 h-3.5" />
+                {g.label}
+              </button>
+            ))}
+
+            <button
+              type="button"
+              onClick={() => void updatePowerGear({ displayOff: true })}
+              className="btn-secondary !px-2 text-xs"
+            >
+              <MonitorOff className="w-3.5 h-3.5" />
+              Display Off
+            </button>
+          </div>
+        </div>
       </section>
 
-      {/* 3. Antigravity Chats & Workspaces Summary */}
+      {/* 3. Antigravity Remote Summary */}
       <section className="surface-card p-3.5 grid grid-cols-2 gap-2.5">
         <a
-          href="/?tab=chat"
+          href="/"
           target="_blank"
           rel="noreferrer"
           className="surface-subtle p-3 min-h-[44px] flex flex-col justify-between gap-1 no-underline"
@@ -319,9 +350,12 @@ export const AuxPaneView: React.FC = () => {
         >
           <div className="flex items-center justify-between">
             <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-              {pendingApprovals.length > 0 ? "Pending Holds" : "Active Chats"}
+              {pendingApprovals.length > 0 ? "Pending Holds" : "Conversations"}
             </span>
-            <ExternalLink className="w-3.5 h-3.5" style={{ color: "var(--text-muted)" }} />
+            <ExternalLink
+              className="w-3.5 h-3.5"
+              style={{ color: "var(--text-muted)" }}
+            />
           </div>
           <div
             className="font-display text-2xl font-bold tabular-nums"
@@ -339,7 +373,7 @@ export const AuxPaneView: React.FC = () => {
         </a>
 
         <a
-          href="/?tab=projects"
+          href="/"
           target="_blank"
           rel="noreferrer"
           className="surface-subtle p-3 min-h-[44px] flex flex-col justify-between gap-1 no-underline"
@@ -347,12 +381,18 @@ export const AuxPaneView: React.FC = () => {
         >
           <div className="flex items-center justify-between">
             <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-              Workspaces
+              Projects
             </span>
-            <Wrench className="w-3.5 h-3.5" style={{ color: "var(--accent-secondary)" }} />
+            <Wrench
+              className="w-3.5 h-3.5"
+              style={{ color: "var(--accent-secondary)" }}
+            />
           </div>
           <div className="font-display text-2xl font-bold tabular-nums flex items-center gap-1.5">
-            <Smartphone className="w-4 h-4" style={{ color: "var(--accent-primary)" }} />
+            <Smartphone
+              className="w-4 h-4"
+              style={{ color: "var(--accent-primary)" }}
+            />
             {agyProjects.length}
           </div>
         </a>

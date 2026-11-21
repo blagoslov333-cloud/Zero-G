@@ -1,110 +1,76 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import {
   Battery,
   BatteryCharging,
-  Check,
-  Clock,
+  Laptop,
   Lock,
-  Palette,
-  Shield,
-  ShieldAlert,
-  ShieldBan,
-  ShieldCheck,
-  Unlock,
+  PanelLeft,
+  PanelRight,
+  SquarePen,
   Zap,
 } from "lucide-react";
 import { useZeroG } from "../lib/store";
-import type { ApprovalItem, PowerGear, ThemePreset } from "../types/contracts";
+import type { PowerGear } from "../types/contracts";
 
-const GEAR_LABEL: Record<PowerGear, string> = {
-  ultra_sip: "Ultra-Sip",
-  auto_turbo: "Auto-Turbo",
-  balanced: "Balanced",
-  max_turbo: "Max Turbo",
-  low_battery_guard: "Low-Batt Guard",
-};
-
-const THEME_CYCLE: ThemePreset[] = ["obsidian", "outdoor", "wireframe"];
-const THEME_LABEL: Record<ThemePreset, string> = {
-  obsidian: "Obsidian",
-  outdoor: "Outdoor",
-  wireframe: "Wireframe",
+const GEAR_SHORT: Record<PowerGear, string> = {
+  ultra_sip: "Sip",
+  auto_turbo: "Auto",
+  balanced: "Bal",
+  max_turbo: "Max",
+  low_battery_guard: "Guard",
 };
 
 export const TopHeader: React.FC = () => {
   const {
-    theme,
-    setTheme,
-    wsStatus,
-    lastSeq,
-    hostGlance,
-    agentGateMode,
-    setAgentGateMode,
-    panicLock,
-    unlockHost,
-    setActiveTab,
     isAuxPane,
+    leftSidebarOpen,
+    toggleLeftSidebar,
+    rightAuxOpen,
+    toggleRightAux,
+    openSettingsModal,
+    startFreshNewConversationView,
+    wsStatus,
+    hostGlance,
     approvals,
-    decideApproval,
+    agyConversations,
+    activeConversationId,
+    activeConversationDetail,
+    isNewChatDraft,
+    selectedProject,
+    devPorts,
   } = useZeroG();
 
-  const [confirmPanic, setConfirmPanic] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [busyApprovalId, setBusyApprovalId] = useState<string | null>(null);
-  const [nowSec, setNowSec] = useState<number>(() => Date.now() / 1000);
+  const pendingApprovalsCount = approvals.filter(
+    (a) => a.status === "pending"
+  ).length;
+  const dirtyGitCount = selectedProject?.dirtyCount || 0;
+  const subagentsCount =
+    activeConversationDetail?.subagents?.length ||
+    agyConversations.find((c) => c.id === activeConversationId)?.subagentCount ||
+    0;
+  const activePortsCount = devPorts.length;
 
-  const pendingApprovals = approvals.filter((a) => a.status === "pending");
+  const auxBadgeTotal =
+    pendingApprovalsCount +
+    (dirtyGitCount > 0 ? 1 : 0) +
+    (subagentsCount > 0 ? 1 : 0) +
+    (activePortsCount > 0 ? 1 : 0);
 
-  useEffect(() => {
-    if (pendingApprovals.length === 0) return;
-    setNowSec(Date.now() / 1000);
-    const timer = window.setInterval(() => {
-      setNowSec(Date.now() / 1000);
-    }, 250);
-    return () => window.clearInterval(timer);
-  }, [pendingApprovals.length]);
+  const activeConv =
+    activeConversationDetail?.conversation ||
+    agyConversations.find((c) => c.id === activeConversationId) ||
+    null;
 
-  const cycleTheme = () => {
-    const idx = THEME_CYCLE.indexOf(theme);
-    const next = THEME_CYCLE[(idx + 1) % THEME_CYCLE.length];
-    setTheme(next);
-  };
+  const activeTitle =
+    isNewChatDraft || !activeConv
+      ? "New conversation"
+      : activeConv.title || "Conversation";
 
-  const handlePanicClick = async () => {
-    if (!confirmPanic) {
-      setConfirmPanic(true);
-      window.setTimeout(() => setConfirmPanic(false), 4000);
-      return;
-    }
-    setBusy(true);
-    try {
-      await panicLock(false);
-    } finally {
-      setBusy(false);
-      setConfirmPanic(false);
-    }
-  };
-
-  const handleUnlock = async () => {
-    setBusy(true);
-    try {
-      await unlockHost();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleApproval = async (
-    item: ApprovalItem,
-    action: "approve" | "allow_30m" | "deny"
-  ) => {
-    setBusyApprovalId(item.id);
-    try {
-      await decideApproval(item.id, { action });
-    } finally {
-      setBusyApprovalId(null);
-    }
-  };
+  const hostname = hostGlance?.hostname || "LAPSTATION";
+  const battery = hostGlance?.batteryPercent;
+  const acPlugged = hostGlance?.acPluggedIn;
+  const gear = hostGlance?.powerGear || "ultra_sip";
+  const isLocked = Boolean(hostGlance?.hostLocked);
 
   const wsDotColor =
     wsStatus === "connected"
@@ -113,322 +79,199 @@ export const TopHeader: React.FC = () => {
         ? "var(--status-danger)"
         : "var(--status-warning)";
 
-  const wsLabel =
+  const onlineText =
     wsStatus === "connected"
-      ? "Live"
+      ? "Online"
       : wsStatus === "offline"
         ? "Offline"
-        : "Sync";
+        : "Syncing";
 
-  const gear = hostGlance?.powerGear || "ultra_sip";
-  const battery = hostGlance?.batteryPercent;
-  const acPlugged = hostGlance?.acPluggedIn;
-  const isLocked = Boolean(hostGlance?.hostLocked);
+  if (isAuxPane) {
+    return (
+      <header
+        className="sticky top-0 z-30 border-b px-3 py-2 flex items-center justify-between gap-2 min-h-[52px]"
+        style={{
+          backgroundColor: "var(--bg-surface)",
+          borderColor: "var(--border-default)",
+        }}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <span
+            className="w-2 h-2 rounded-full shrink-0"
+            style={{ backgroundColor: wsDotColor }}
+          />
+          <span className="font-display text-sm font-bold truncate">
+            {hostname} · Antigravity Companion
+          </span>
+        </div>
+        <span
+          className="font-mono text-xs tabular-nums shrink-0"
+          style={{ color: "var(--text-muted)" }}
+        >
+          {typeof battery === "number" ? `${battery}%` : onlineText}
+        </span>
+      </header>
+    );
+  }
 
   return (
     <header
-      className="sticky top-0 z-30 border-b"
+      className="shrink-0 z-30 border-b px-2 sm:px-3 flex items-center justify-between gap-1.5 min-h-[54px]"
       style={{
         backgroundColor: "var(--bg-surface)",
         borderColor: "var(--border-default)",
       }}
     >
-      <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-between gap-1.5 px-2.5 sm:px-4 py-2 min-h-[54px]">
-        {/* Brand + Live Connection Pill */}
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span
-            className="font-display text-xs sm:text-sm font-bold tracking-tight px-2 py-1 rounded-[var(--radius-inner)] border truncate"
+      {/* Left: Sidebar Toggle + New Conversation */}
+      <div className="flex items-center gap-0.5 shrink-0">
+        <button
+          type="button"
+          onClick={toggleLeftSidebar}
+          className="agy-icon-btn"
+          aria-label={leftSidebarOpen ? "Close left sidebar" : "Open left sidebar"}
+          aria-expanded={leftSidebarOpen}
+          title="Toggle Sidebar"
+        >
+          <PanelLeft
+            className="w-5 h-5"
             style={{
-              backgroundColor: "var(--bg-subtle)",
-              borderColor: "var(--border-default)",
-              color: "var(--text-primary)",
+              color: leftSidebarOpen
+                ? "var(--accent-primary)"
+                : "var(--text-muted)",
             }}
-          >
-            Zero-G · Antigravity
-          </span>
-          <div
-            className="inline-flex items-center gap-1 text-[11px] font-mono tabular-nums px-2 py-1 rounded-full border shrink-0"
-            style={{
-              backgroundColor: "var(--bg-subtle)",
-              borderColor: "var(--border-default)",
-              color: "var(--text-muted)",
-            }}
-            title={`WebSocket: ${wsStatus} (#${lastSeq})`}
-          >
-            <span
-              className="w-2 h-2 rounded-full shrink-0"
-              style={{ backgroundColor: wsDotColor }}
-              aria-hidden="true"
-            />
-            <span>{wsLabel}</span>
-            <span className="hidden sm:inline">#{lastSeq}</span>
-          </div>
-        </div>
+          />
+        </button>
 
-        {/* Agent Permission Pill + Battery/Power + Theme + PANIC */}
-        <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
-          {!isAuxPane && (
-            <>
-              <button
-                type="button"
-                onClick={() =>
-                  void setAgentGateMode(
-                    agentGateMode === "agent_turbo"
-                      ? "ask_on_phone"
-                      : "agent_turbo"
-                  )
-                }
-                className="btn-secondary !min-h-[44px] !min-w-[44px] !px-2 sm:!px-2.5 text-xs"
-                title="Toggle Agent Permission Mode (Ask on Phone vs Agent Turbo)"
-                aria-label={`Agent permission mode: ${
-                  agentGateMode === "agent_turbo" ? "Agent Turbo" : "Ask on Phone"
-                }`}
-              >
-                {agentGateMode === "agent_turbo" ? (
-                  <Zap
-                    className="w-4 h-4 shrink-0"
-                    style={{ color: "var(--accent-secondary)" }}
-                  />
-                ) : (
-                  <ShieldCheck
-                    className="w-4 h-4 shrink-0"
-                    style={{ color: "var(--accent-primary)" }}
-                  />
-                )}
-                <span className="hidden md:inline font-semibold">
-                  {agentGateMode === "agent_turbo"
-                    ? "Agent Turbo"
-                    : "Ask on Phone"}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveTab("laptop")}
-                className="btn-secondary !min-h-[44px] !min-w-[44px] !px-2 sm:!px-2.5 text-xs tabular-nums"
-                title="Open Laptop Power & Settings"
-                aria-label={`Laptop battery ${battery ?? "--"} percent, hardware gear ${GEAR_LABEL[gear]}`}
-              >
-                {acPlugged ? (
-                  <BatteryCharging
-                    className="w-4 h-4 shrink-0"
-                    style={{ color: "var(--status-success)" }}
-                  />
-                ) : (
-                  <Battery
-                    className="w-4 h-4 shrink-0"
-                    style={{
-                      color:
-                        typeof battery === "number" && battery <= 20
-                          ? "var(--status-warning)"
-                          : "var(--text-primary)",
-                    }}
-                  />
-                )}
-                <span className="font-mono font-semibold hidden sm:inline">
-                  {typeof battery === "number" ? `${battery}%` : "--"}
-                </span>
-                <span
-                  className="hidden lg:inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
-                  style={{
-                    backgroundColor:
-                      gear === "auto_turbo" || gear === "max_turbo"
-                        ? "var(--status-info-bg)"
-                        : "var(--status-success-bg)",
-                    color:
-                      gear === "auto_turbo" || gear === "max_turbo"
-                        ? "var(--status-info-fg)"
-                        : "var(--status-success-fg)",
-                  }}
-                >
-                  <Zap className="w-3 h-3" />
-                  {GEAR_LABEL[gear]}
-                </span>
-              </button>
-            </>
-          )}
-
-          <button
-            type="button"
-            onClick={cycleTheme}
-            className="btn-secondary !min-h-[44px] !min-w-[44px] !px-2 sm:!px-2.5 text-xs"
-            aria-label={`Switch theme (current: ${THEME_LABEL[theme]})`}
-            title={`Theme: ${THEME_LABEL[theme]} (tap to switch)`}
-          >
-            <Palette className="w-4 h-4 shrink-0" />
-            <span className="hidden sm:inline">{THEME_LABEL[theme]}</span>
-          </button>
-
-          {!isLocked ? (
-            <button
-              type="button"
-              onClick={() => void handlePanicClick()}
-              disabled={busy}
-              className="btn-danger !min-h-[44px] !min-w-[44px] !px-2.5 sm:!px-3 text-xs font-bold tracking-wide"
-              aria-label={
-                confirmPanic
-                  ? "Confirm PANIC host lock"
-                  : "PANIC lock host immediately"
-              }
-            >
-              <ShieldAlert className="w-4 h-4 shrink-0" />
-              <span className="hidden sm:inline">
-                {confirmPanic ? "CONFIRM?" : "PANIC"}
-              </span>
-              {confirmPanic && <span className="sm:hidden">?</span>}
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => void handleUnlock()}
-              disabled={busy}
-              className="btn-primary !min-h-[44px] !min-w-[44px] !px-2.5 sm:!px-3 text-xs font-bold"
-              aria-label="Unlock host"
-            >
-              <Unlock className="w-4 h-4 shrink-0" />
-              <span className="hidden sm:inline">UNLOCK</span>
-            </button>
-          )}
-        </div>
+        <button
+          type="button"
+          onClick={() => startFreshNewConversationView()}
+          className="agy-icon-btn"
+          aria-label="New conversation"
+          title="New conversation"
+        >
+          <SquarePen className="w-5 h-5" />
+        </button>
       </div>
 
-      {/* Persistent HOST_LOCKED Banner */}
-      {isLocked && (
-        <div
-          role="alert"
-          className="border-t px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs font-medium"
-          style={{
-            backgroundColor: "var(--status-danger-bg)",
-            borderColor: "var(--status-danger)",
-            color: "var(--status-danger-fg)",
-          }}
+      {/* Center: Computer Instance Pill + Active Conversation Title */}
+      <div className="flex items-center justify-center gap-2 min-w-0 flex-1">
+        <button
+          type="button"
+          onClick={() => openSettingsModal("computer")}
+          className="agy-pill-btn !px-2.5 sm:!px-3 max-w-full min-w-0 shrink"
+          title="Open Settings → This Computer"
+          aria-label={`Computer instance ${hostname}, status ${onlineText}`}
         >
-          <div className="flex items-center gap-2 min-w-0">
-            <Lock className="w-4 h-4 shrink-0" />
-            <span className="break-words">
-              <strong>HOST LOCKED</strong> — Hooks denying all writes &amp;
-              active terminal jobs terminated.
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={() => void handleUnlock()}
-            disabled={busy}
-            className="btn-secondary !min-h-[44px] !py-1 !px-3 text-xs shrink-0"
+          <span
+            className="w-2 h-2 rounded-full shrink-0"
+            style={{
+              backgroundColor: isLocked ? "var(--status-danger)" : wsDotColor,
+            }}
+            aria-hidden="true"
+          />
+          {isLocked ? (
+            <Lock
+              className="w-3.5 h-3.5 shrink-0"
+              style={{ color: "var(--status-danger)" }}
+            />
+          ) : (
+            <Laptop
+              className="w-3.5 h-3.5 shrink-0 hidden xs:inline sm:inline"
+              style={{ color: "var(--text-muted)" }}
+            />
+          )}
+          <span className="font-semibold truncate max-w-[115px] sm:max-w-[180px]">
+            {hostname}
+          </span>
+          <span
+            className="hidden sm:inline text-[11px]"
+            style={{ color: "var(--text-muted)" }}
           >
-            Reset Lock
-          </button>
-        </div>
-      )}
+            · {isLocked ? "Locked" : onlineText}
+          </span>
 
-      {/* Global Inline Permission Request Banner (visible on ANY tab) */}
-      {pendingApprovals.length > 0 && (
-        <section
-          aria-label="Pending Permission Request"
-          role="region"
-          className="border-t"
-          style={{
-            backgroundColor: "var(--status-warning-bg)",
-            borderColor: "var(--status-warning)",
-          }}
+          {typeof battery === "number" && (
+            <span
+              className="inline-flex items-center gap-0.5 font-mono text-[11px] tabular-nums shrink-0 pl-1 border-l"
+              style={{
+                borderColor: "var(--border-default)",
+                color:
+                  battery <= 20 && !acPlugged
+                    ? "var(--status-warning)"
+                    : "var(--text-muted)",
+              }}
+            >
+              {acPlugged ? (
+                <BatteryCharging
+                  className="w-3.5 h-3.5 shrink-0"
+                  style={{ color: "var(--status-success)" }}
+                />
+              ) : (
+                <Battery className="w-3.5 h-3.5 shrink-0" />
+              )}
+              <span>{battery}%</span>
+            </span>
+          )}
+
+          <span
+            className="hidden md:inline-flex items-center gap-0.5 font-mono text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
+            style={{
+              backgroundColor: "var(--bg-elevated)",
+              color: "var(--accent-secondary)",
+            }}
+          >
+            <Zap className="w-2.5 h-2.5" />
+            {GEAR_SHORT[gear]}
+          </span>
+        </button>
+
+        <span
+          className="hidden md:inline text-xs font-medium truncate max-w-[240px] lg:max-w-[340px]"
+          style={{ color: "var(--text-muted)" }}
+          title={activeTitle}
         >
-          <div className="mx-auto max-w-4xl px-3 py-2.5 space-y-2">
-            {pendingApprovals.map((item) => {
-              const remaining = Math.max(0, item.expiresAt - nowSec);
-              const isBusy = busyApprovalId === item.id;
-              const previewText =
-                item.commandPreview ||
-                (typeof item.rawArgs?.command === "string"
-                  ? item.rawArgs.command
-                  : typeof item.rawArgs?.path === "string"
-                    ? item.rawArgs.path
-                    : JSON.stringify(item.rawArgs || {}));
+          {activeTitle}
+        </span>
+      </div>
 
-              return (
-                <div
-                  key={item.id}
-                  className="rounded-[var(--radius-inner)] border p-2.5 space-y-2"
-                  style={{
-                    backgroundColor: "var(--bg-surface)",
-                    borderColor: "var(--status-warning)",
-                  }}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Shield
-                        className="w-4 h-4 shrink-0"
-                        style={{ color: "var(--status-warning)" }}
-                      />
-                      <span className="text-xs font-semibold truncate">
-                        Antigravity wants to run{" "}
-                        <code
-                          className="font-mono"
-                          style={{ color: "var(--accent-secondary)" }}
-                        >
-                          {item.toolName}
-                        </code>
-                      </span>
-                    </div>
-                    <span
-                      className="inline-flex items-center gap-1 font-mono text-xs font-bold tabular-nums shrink-0"
-                      style={{
-                        color:
-                          remaining <= 6
-                            ? "var(--status-danger)"
-                            : "var(--status-warning)",
-                      }}
-                    >
-                      <Clock className="w-3.5 h-3.5" />
-                      {remaining.toFixed(0)}s
-                    </span>
-                  </div>
-
-                  <div
-                    className="rounded-[var(--radius-inner)] border px-2.5 py-1.5 font-mono text-xs break-all max-h-20 overflow-y-auto"
-                    style={{
-                      backgroundColor: "var(--bg-subtle)",
-                      borderColor: "var(--border-default)",
-                      color: "var(--text-primary)",
-                    }}
-                  >
-                    {previewText}
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-2">
-                    <button
-                      type="button"
-                      disabled={isBusy}
-                      onClick={() => void handleApproval(item, "approve")}
-                      className="btn-primary !min-h-[44px] !px-2 text-xs"
-                    >
-                      <Check className="w-4 h-4 shrink-0" />
-                      <span>Approve</span>
-                    </button>
-                    <button
-                      type="button"
-                      disabled={isBusy}
-                      onClick={() => void handleApproval(item, "allow_30m")}
-                      className="btn-secondary !min-h-[44px] !px-2 text-xs"
-                    >
-                      <Shield className="w-4 h-4 shrink-0" />
-                      <span>Allow 30m</span>
-                    </button>
-                    <button
-                      type="button"
-                      disabled={isBusy}
-                      onClick={() => void handleApproval(item, "deny")}
-                      className="btn-danger !min-h-[44px] !px-2 text-xs"
-                    >
-                      <ShieldBan className="w-4 h-4 shrink-0" />
-                      <span>Deny</span>
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
+      {/* Right: Auxiliary Pane Toggle + Actionable Badge */}
+      <div className="flex items-center shrink-0">
+        <button
+          type="button"
+          onClick={toggleRightAux}
+          className="agy-icon-btn relative"
+          aria-label={
+            rightAuxOpen ? "Close auxiliary pane" : "Open auxiliary pane"
+          }
+          aria-expanded={rightAuxOpen}
+          title="Toggle Right Auxiliary Pane"
+        >
+          <PanelRight
+            className="w-5 h-5"
+            style={{
+              color: rightAuxOpen
+                ? "var(--accent-primary)"
+                : pendingApprovalsCount > 0
+                  ? "var(--status-warning)"
+                  : "var(--text-muted)",
+            }}
+          />
+          {auxBadgeTotal > 0 && (
+            <span
+              className="absolute top-1 right-1 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-mono font-bold tabular-nums inline-flex items-center justify-center"
+              style={{
+                backgroundColor:
+                  pendingApprovalsCount > 0
+                    ? "var(--status-warning)"
+                    : "var(--accent-primary)",
+                color: "var(--accent-primary-fg)",
+              }}
+            >
+              {pendingApprovalsCount > 0 ? pendingApprovalsCount : auxBadgeTotal}
+            </span>
+          )}
+        </button>
+      </div>
     </header>
   );
 };

@@ -72,12 +72,14 @@ class GitManager:
         repo_path: str,
         args: list[str],
         read_only: bool = True,
+        timeout_sec: float | None = None,
     ) -> tuple[int, str, str]:
         git_exe = shutil.which("git") or "git"
         env = os.environ.copy()
         if read_only:
             env["GIT_OPTIONAL_LOCKS"] = "0"
         env.setdefault("GIT_TERMINAL_PROMPT", "0")
+        effective_timeout = float(timeout_sec) if timeout_sec is not None else self.timeout_sec
 
         try:
             proc = subprocess.run(
@@ -88,7 +90,7 @@ class GitManager:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=self.timeout_sec,
+                timeout=effective_timeout,
                 creationflags=CREATE_NO_WINDOW if IS_WINDOWS else 0,
             )
             return proc.returncode, proc.stdout, proc.stderr
@@ -403,3 +405,118 @@ class GitManager:
             "branchName": sanitized_branch,
             "error": None,
         }
+
+    def commit_and_push(
+        self,
+        repo_path: str,
+        message: str,
+        push: bool = True,
+    ) -> dict[str, Any]:
+        if not self._is_git_repo(repo_path):
+            return {
+                "ok": False,
+                "committed": False,
+                "pushed": False,
+                "error": "Not a git repository",
+            }
+
+        clean_msg = (message or "").strip()
+        if not clean_msg:
+            return {
+                "ok": False,
+                "committed": False,
+                "pushed": False,
+                "error": "Commit message is required",
+            }
+
+        rc_add, _, err_add = self._run_git(repo_path, ["add", "-A"], read_only=False)
+        if rc_add != 0:
+            return {
+                "ok": False,
+                "committed": False,
+                "pushed": False,
+                "error": err_add.strip() or "git add failed",
+            }
+
+        rc_st, st_out, st_err = self._run_git(
+            repo_path,
+            ["status", "--porcelain=v1"],
+            read_only=True,
+        )
+        if rc_st != 0:
+            return {
+                "ok": False,
+                "committed": False,
+                "pushed": False,
+                "error": st_err.strip() or "git status failed",
+            }
+        if not st_out.strip():
+            return {
+                "ok": False,
+                "committed": False,
+                "pushed": False,
+                "error": "Nothing to commit (working tree clean)",
+            }
+
+        rc_cm, cm_out, cm_err = self._run_git(
+            repo_path,
+            ["commit", "-m", clean_msg],
+            read_only=False,
+        )
+        if rc_cm != 0:
+            combined_cm = f"{cm_out}\n{cm_err}"
+            if (
+                "Please tell me who you are" in combined_cm
+                or "Author identity unknown" in combined_cm
+            ):
+                rc_cm, cm_out, cm_err = self._run_git(
+                    repo_path,
+                    [
+                        "-c",
+                        "user.name=Antigravity Remote",
+                        "-c",
+                        "user.email=remote@antigravity.local",
+                        "commit",
+                        "-m",
+                        clean_msg,
+                    ],
+                    read_only=False,
+                )
+        if rc_cm != 0:
+            return {
+                "ok": False,
+                "committed": False,
+                "pushed": False,
+                "error": cm_err.strip() or cm_out.strip() or "git commit failed",
+            }
+
+        commit_sha = self.get_head_sha(repo_path)
+        branch = self.get_branch(repo_path)
+
+        if not push:
+            return {
+                "ok": True,
+                "committed": True,
+                "pushed": False,
+                "commitSha": commit_sha,
+                "branch": branch,
+                "pushOutput": "",
+                "error": None,
+            }
+
+        push_rc, push_out, push_err = self._run_git(
+            repo_path,
+            ["push"],
+            read_only=False,
+            timeout_sec=max(self.timeout_sec, 25.0),
+        )
+        return {
+            "ok": push_rc == 0,
+            "committed": True,
+            "pushed": push_rc == 0,
+            "commitSha": commit_sha,
+            "branch": branch,
+            "pushOutput": (push_out + "\n" + push_err).strip(),
+            "error": None if push_rc == 0 else (push_err.strip() or "git push failed"),
+        }
+

@@ -84,6 +84,21 @@ try:
 except Exception:
     _tunnel_mod = None  # type: ignore[assignment]
 
+try:
+    from server import preview_proxy as _preview_proxy_mod
+except Exception:
+    _preview_proxy_mod = None  # type: ignore[assignment]
+
+try:
+    from server import voice_live as _voice_live_mod
+except Exception:
+    _voice_live_mod = None  # type: ignore[assignment]
+
+try:
+    from server import startup_notify as _startup_notify_mod
+except Exception:
+    _startup_notify_mod = None  # type: ignore[assignment]
+
 
 BUILTIN_MOBILE_TOOLS: list[dict[str, Any]] = [
     {
@@ -173,6 +188,8 @@ BUILTIN_MOBILE_TOOLS: list[dict[str, Any]] = [
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]", "testserver"}
 _OPEN_API_PATHS = {"/api/health", "/api/pairing/claim", "/api/push/vapid-public-key"}
+_VALID_PERMISSION_PRESETS = ("request_review", "default", "auto", "turbo")
+_VALID_INTERFACE_LAYOUTS = ("software_engineering", "knowledge_work")
 
 
 async def _maybe_await(val: Any) -> Any:
@@ -274,6 +291,19 @@ class ZeroGState:
         self.host_locked: bool = bool(self.db.get_kv("host_locked", False))
         saved_gate = str(self.db.get_kv("agent_gate_mode", "ask_on_phone"))
         self.agent_gate_mode: str = saved_gate if saved_gate in ("ask_on_phone", "agent_turbo") else "ask_on_phone"
+        saved_preset = str(
+            self.db.get_kv(
+                "permission_preset",
+                "turbo" if self.agent_gate_mode == "agent_turbo" else "default",
+            )
+        )
+        self.permission_preset: str = (
+            saved_preset if saved_preset in _VALID_PERMISSION_PRESETS else "default"
+        )
+        saved_layout = str(self.db.get_kv("interface_layout", "software_engineering"))
+        self.interface_layout: str = (
+            saved_layout if saved_layout in _VALID_INTERFACE_LAYOUTS else "software_engineering"
+        )
         self.ws_clients: set[WebSocket] = set()
         self.pending_approval_events: dict[str, asyncio.Event] = {}
         self.pending_mobile_tool_calls: dict[str, asyncio.Future[dict[str, Any]]] = {}
@@ -285,6 +315,16 @@ class ZeroGState:
         self.pty_mux: Any = None
         self.git_manager: Any = None
         self.tunnel_supervisor: Any = None
+        self.voice_bridge: Any = (
+            _voice_live_mod.VoiceLiveBridge()
+            if _voice_live_mod is not None and hasattr(_voice_live_mod, "VoiceLiveBridge")
+            else None
+        )
+        self.startup_manager: Any = (
+            _startup_notify_mod.StartupAndNotifyManager()
+            if _startup_notify_mod is not None and hasattr(_startup_notify_mod, "StartupAndNotifyManager")
+            else None
+        )
 
         self._seed_builtin_mobile_tools()
         self._bind_sibling_modules()
@@ -456,13 +496,20 @@ class ZeroGState:
         return _fallback_qr_svg(text)
 
 
-def _extract_auth_token_from_headers_or_query(headers: Any, query_params: Any) -> str | None:
-    return (
+def _extract_auth_token_from_headers_or_query(
+    headers: Any,
+    query_params: Any,
+    cookies: Any = None,
+) -> str | None:
+    tok = (
         headers.get("X-0G-Bridge-Token")
         or headers.get("X-0G-Token")
         or headers.get("Authorization")
         or query_params.get("token")
     )
+    if not tok and cookies is not None:
+        tok = cookies.get("zerog_session")
+    return tok
 
 
 def _is_non_loopback_or_auth_forced(host_header: str | None) -> bool:
@@ -531,6 +578,10 @@ def create_app(
                         file=sys.stderr,
                         flush=True,
                     )
+                    if state.startup_manager is not None:
+                        asyncio.create_task(
+                            state.startup_manager.notify_tunnel_url(state, pub_url, pair, force=False)
+                        )
                 except Exception:
                     pass
 
@@ -549,6 +600,10 @@ def create_app(
                                     "pairing": {**pair, "pairUrl": pair["pairingUrl"], "url": pair["pairingUrl"]},
                                 }
                                 state.db.emit_event("tunnel.updated", payload)
+                                if state.startup_manager is not None:
+                                    asyncio.create_task(
+                                        state.startup_manager.notify_tunnel_url(state, pub_url, pair, force=False)
+                                    )
                                 print(
                                     f"[0G Tunnel Watchdog] Renewed Phone HTTPS URL: {pair['pairingUrl']} (Code: {pair['code']})",
                                     file=sys.stderr,
@@ -611,15 +666,32 @@ def create_app(
     @app.middleware("http")
     async def non_loopback_auth_middleware(request: Request, call_next: Any) -> Response:
         path = request.url.path
-        if path.startswith("/api/") and path not in _OPEN_API_PATHS:
-            if _is_non_loopback_or_auth_forced(request.headers.get("host")):
-                tok = _extract_auth_token_from_headers_or_query(request.headers, request.query_params)
-                if not state.auth.verify_mobile_token(tok):
-                    return JSONResponse(
-                        status_code=401,
-                        content={"detail": "Unauthorized: valid mobile session token or bridge.token required"},
-                    )
-        return await call_next(request)
+        is_protected = (path.startswith("/api/") or path.startswith("/preview/")) and path not in _OPEN_API_PATHS
+        query_tok = request.query_params.get("token")
+        verified_query_tok: str | None = None
+        if is_protected and _is_non_loopback_or_auth_forced(request.headers.get("host")):
+            tok = _extract_auth_token_from_headers_or_query(
+                request.headers,
+                request.query_params,
+                request.cookies,
+            )
+            if not state.auth.verify_mobile_token(tok):
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Unauthorized: valid mobile session token or bridge.token required"},
+                )
+            if path.startswith("/preview/") and query_tok and state.auth.verify_mobile_token(query_tok):
+                verified_query_tok = query_tok
+        response = await call_next(request)
+        if verified_query_tok:
+            response.set_cookie(
+                key="zerog_session",
+                value=verified_query_tok,
+                httponly=True,
+                samesite="lax",
+                path="/",
+            )
+        return response
 
     # -------------------------------------------------------------------------
     # Health & Status
@@ -657,6 +729,8 @@ def create_app(
             ),
             "mobileToolsCount": len(state.db.list_mobile_tools()),
             "agentGateMode": state.agent_gate_mode,
+            "permissionPreset": state.permission_preset,
+            "interfaceLayout": state.interface_layout,
             "power": state.get_power_state(),
             "tunnel": {
                 **state.get_tunnel_status(),
@@ -697,7 +771,7 @@ def create_app(
         }
 
     @app.post("/api/pairing/claim")
-    async def api_pairing_claim(request: Request) -> dict[str, Any]:
+    async def api_pairing_claim(request: Request) -> Response:
         try:
             body = await request.json()
         except Exception:
@@ -708,11 +782,21 @@ def create_app(
         if not claimed:
             raise HTTPException(status_code=401, detail="Invalid, expired, or already claimed pairing code")
         state.db.emit_event("pairing.claimed", {"deviceName": device_name, "ts": time.time()})
-        return {
-            **claimed,
-            "token": claimed["sessionToken"],
-            "sessionToken": claimed["sessionToken"],
-        }
+        resp = JSONResponse(
+            content={
+                **claimed,
+                "token": claimed["sessionToken"],
+                "sessionToken": claimed["sessionToken"],
+            }
+        )
+        resp.set_cookie(
+            key="zerog_session",
+            value=str(claimed["sessionToken"]),
+            httponly=True,
+            samesite="lax",
+            path="/",
+        )
+        return resp
 
     @app.get("/api/pairing/qr")
     async def api_pairing_qr(format: str | None = Query(default=None)) -> Response:
@@ -977,7 +1061,7 @@ def create_app(
             )
 
             auto_dec = eval_res["autoDecision"]
-            if auto_dec == "deny":
+            if auto_dec == "deny" or int(eval_res["riskTier"]) >= 3:
                 denied_item = ApprovalItem(
                     id=f"appr-{uuid.uuid4().hex[:10]}",
                     sessionId=session_id,
@@ -1012,14 +1096,33 @@ def create_app(
                 reason_str = "; ".join(eval_res["riskReasons"]) or "Blocked by 0G Tier-3 security rule"
                 return HookDecisionResponse(decision="deny", reason=reason_str).model_dump()
 
-            if auto_dec == "allow" or (
-                state.agent_gate_mode == "agent_turbo" and int(eval_res["riskTier"]) < 3
-            ):
-                resolved_by = (
-                    eval_res["ruleId"]
-                    if auto_dec == "allow" and eval_res["ruleId"]
-                    else "agent_turbo"
-                )
+            rule_id = str(eval_res.get("ruleId") or "")
+            is_explicit_user_allow = auto_dec == "allow" and not rule_id.startswith("rule-tier0-")
+            proj_preset = state.agy_bridge.resolve_project_preset_for_cwd(state.db, session.cwd)
+            effective_preset = proj_preset or state.permission_preset
+            if effective_preset not in _VALID_PERMISSION_PRESETS:
+                effective_preset = "turbo" if state.agent_gate_mode == "agent_turbo" else "default"
+
+            should_auto_allow = False
+            resolved_by = "rules_engine"
+            if is_explicit_user_allow:
+                should_auto_allow = True
+                resolved_by = rule_id or "user_rule"
+            elif effective_preset == "turbo":
+                should_auto_allow = True
+                resolved_by = "agent_turbo" if state.agent_gate_mode == "agent_turbo" else "preset_turbo"
+            elif effective_preset == "auto":
+                if auto_dec == "allow" or int(eval_res["riskTier"]) <= 1:
+                    should_auto_allow = True
+                    resolved_by = rule_id if (auto_dec == "allow" and rule_id) else "preset_auto"
+            elif effective_preset == "default":
+                if auto_dec == "allow":
+                    should_auto_allow = True
+                    resolved_by = rule_id or "rules_engine"
+            elif effective_preset == "request_review":
+                should_auto_allow = False
+
+            if should_auto_allow:
                 allowed_item = ApprovalItem(
                     id=f"appr-{uuid.uuid4().hex[:10]}",
                     sessionId=session_id,
@@ -1049,7 +1152,7 @@ def create_app(
                 reason_msg = (
                     f"Auto-allowed by Agent Turbo (Tier {eval_res['riskTier']})"
                     if resolved_by == "agent_turbo"
-                    else f"Auto-allowed by 0G rule ({resolved_by})"
+                    else f"Auto-allowed by {effective_preset} policy ({resolved_by})"
                 )
                 return HookDecisionResponse(
                     decision="allow",
@@ -2019,10 +2122,22 @@ def create_app(
     @app.post("/api/host/agent-gate")
     async def api_host_agent_gate(req: AgentGateUpdateRequest) -> dict[str, Any]:
         state.agent_gate_mode = req.mode
+        state.permission_preset = "turbo" if req.mode == "agent_turbo" else "default"
         state.db.set_kv("agent_gate_mode", req.mode)
-        state.db.append_audit("mobile_user", "agent_gate_updated", {"mode": req.mode})
-        payload = {"agentGateMode": req.mode, "ts": time.time()}
+        state.db.set_kv("permission_preset", state.permission_preset)
+        state.db.append_audit(
+            "mobile_user",
+            "agent_gate_updated",
+            {"mode": req.mode, "permissionPreset": state.permission_preset},
+        )
+        payload = {
+            "agentGateMode": req.mode,
+            "permissionPreset": state.permission_preset,
+            "interfaceLayout": state.interface_layout,
+            "ts": time.time(),
+        }
         state.db.emit_event("agent_gate.updated", payload)
+        state.db.emit_event("settings.updated", payload)
         return {"ok": True, **payload}
 
     @app.post("/api/host/power-gear")
@@ -2360,6 +2475,32 @@ def create_app(
             return res if isinstance(res, dict) else {"ok": bool(res)}
         return {"ok": True, "repoPath": repo_path, "discarded": True}
 
+    @app.post("/api/git/commit-push")
+    async def api_git_commit_push(request: Request) -> dict[str, Any]:
+        if state.host_locked:
+            raise HTTPException(status_code=423, detail="HOST_LOCKED: Git commit/push blocked while Panic Lock is active")
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="JSON object body is required")
+        repo_path = _resolve_repo_path(body.get("repoPath") or body.get("path"))
+        message = str(body.get("message") or "").strip()
+        if not message:
+            raise HTTPException(status_code=400, detail="Commit message is required")
+        push = bool(body.get("push", True))
+        state._bind_sibling_modules()
+        if state.git_manager is not None and hasattr(state.git_manager, "commit_and_push"):
+            res = await _maybe_await(state.git_manager.commit_and_push(repo_path, message, push=push))
+            state.db.append_audit(
+                "mobile_user",
+                "git_commit_push",
+                {"repoPath": repo_path, "push": push, "ok": bool(res.get("ok"))},
+            )
+            return res
+        raise HTTPException(status_code=501, detail="GitManager commit_and_push unavailable")
+
     # -------------------------------------------------------------------------
     # Tunnel Supervisor & Provider Hook Config Snippets
     # -------------------------------------------------------------------------
@@ -2409,6 +2550,12 @@ def create_app(
                 pass
         status = await api_tunnel_status()
         state.db.emit_event("tunnel.updated", status)
+        pub_url = str(status.get("publicUrl") or "")
+        if pub_url.startswith("https://") and state.startup_manager is not None:
+            pairing = status.get("pairing") or {}
+            asyncio.create_task(
+                state.startup_manager.notify_tunnel_url(state, pub_url, pairing, force=False)
+            )
         return status
 
     @app.post("/api/tunnel/stop")
@@ -2472,12 +2619,116 @@ def create_app(
         return {"shimCommand": shim_cmd, "providers": providers, "configs": configs_list}
 
     # -------------------------------------------------------------------------
-    # Antigravity Desktop Bridge Endpoints (/api/agy/*)
+    # Antigravity Desktop Bridge Endpoints (/api/agy/*), Preview Proxy & /ws/voice
     # -------------------------------------------------------------------------
+
+    @app.get("/api/agy/settings")
+    async def api_agy_settings_get() -> dict[str, Any]:
+        voice_caps = (
+            _voice_live_mod.get_voice_capabilities()
+            if _voice_live_mod is not None and hasattr(_voice_live_mod, "get_voice_capabilities")
+            else {"geminiLiveAvailable": False, "model": "gemini-3.8-live", "fallback": "web_speech"}
+        )
+        autostart = (
+            state.startup_manager.get_autostart_status(state.db)
+            if state.startup_manager is not None
+            else {"enabled": False, "notifyEmail": "blagoslov333@gmail.com", "autoEmailOnTunnelChange": True}
+        )
+        return {
+            "ok": True,
+            "permissionPreset": state.permission_preset,
+            "interfaceLayout": state.interface_layout,
+            "agentGateMode": state.agent_gate_mode,
+            "voiceCapabilities": voice_caps,
+            "autostart": autostart,
+        }
+
+    @app.post("/api/agy/settings")
+    async def api_agy_settings_post(request: Request) -> dict[str, Any]:
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="JSON object body is required")
+
+        gate_changed = False
+        if "permissionPreset" in body and body["permissionPreset"] is not None:
+            preset = str(body["permissionPreset"]).strip().lower()
+            if preset not in _VALID_PERMISSION_PRESETS:
+                raise HTTPException(status_code=400, detail=f"Invalid permissionPreset: {preset!r}")
+            state.permission_preset = preset
+            state.db.set_kv("permission_preset", preset)
+            new_gate = "agent_turbo" if preset == "turbo" else "ask_on_phone"
+            if new_gate != state.agent_gate_mode:
+                state.agent_gate_mode = new_gate
+                state.db.set_kv("agent_gate_mode", new_gate)
+                gate_changed = True
+
+        if "interfaceLayout" in body and body["interfaceLayout"] is not None:
+            layout = str(body["interfaceLayout"]).strip().lower()
+            if layout not in _VALID_INTERFACE_LAYOUTS:
+                raise HTTPException(status_code=400, detail=f"Invalid interfaceLayout: {layout!r}")
+            state.interface_layout = layout
+            state.db.set_kv("interface_layout", layout)
+
+        if "agentGateMode" in body and body["agentGateMode"] is not None and "permissionPreset" not in body:
+            g_mode = str(body["agentGateMode"]).strip().lower()
+            if g_mode not in ("ask_on_phone", "agent_turbo"):
+                raise HTTPException(status_code=400, detail=f"Invalid agentGateMode: {g_mode!r}")
+            state.agent_gate_mode = g_mode
+            state.permission_preset = "turbo" if g_mode == "agent_turbo" else "default"
+            state.db.set_kv("agent_gate_mode", g_mode)
+            state.db.set_kv("permission_preset", state.permission_preset)
+            gate_changed = True
+
+        state.db.append_audit(
+            "mobile_user",
+            "agy_settings_updated",
+            {
+                "permissionPreset": state.permission_preset,
+                "interfaceLayout": state.interface_layout,
+                "agentGateMode": state.agent_gate_mode,
+            },
+        )
+        payload = await api_agy_settings_get()
+        state.db.emit_event("settings.updated", payload)
+        if gate_changed:
+            state.db.emit_event(
+                "agent_gate.updated",
+                {"agentGateMode": state.agent_gate_mode, "permissionPreset": state.permission_preset, "ts": time.time()},
+            )
+        return payload
 
     @app.get("/api/agy/projects")
     async def api_agy_projects() -> dict[str, Any]:
-        return {"projects": state.agy_bridge.discover_real_projects()}
+        return {"projects": state.agy_bridge.get_merged_projects(db=state.db)}
+
+    @app.post("/api/agy/projects/configs")
+    async def api_agy_projects_config_upsert(request: Request) -> dict[str, Any]:
+        if state.host_locked:
+            raise HTTPException(status_code=423, detail="HOST_LOCKED")
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="JSON object body is required")
+        try:
+            proj = state.agy_bridge.upsert_configured_project(state.db, body)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        state.db.emit_event("project.updated", proj)
+        return {"ok": True, "project": proj}
+
+    @app.delete("/api/agy/projects/configs/{project_id}")
+    async def api_agy_projects_config_delete(project_id: str) -> dict[str, Any]:
+        if state.host_locked:
+            raise HTTPException(status_code=423, detail="HOST_LOCKED")
+        deleted = state.agy_bridge.delete_configured_project(state.db, project_id)
+        if deleted:
+            state.db.emit_event("project.updated", {"id": project_id, "deleted": True})
+        return {"ok": deleted, "id": project_id}
 
     @app.get("/api/agy/conversations")
     async def api_agy_conversations(
@@ -2507,6 +2758,11 @@ def create_app(
         title = body.get("title")
         model = body.get("model")
         workspace_path = body.get("workspacePath")
+        worktree_mode = str(body.get("worktreeMode") or "local")
+        branch_name = body.get("branchName")
+        raw_folders = body.get("folders")
+        folders = [str(f) for f in raw_folders] if isinstance(raw_folders, list) else None
+        perm_preset = body.get("permissionPreset")
         try:
             return await state.agy_bridge.start_new_conversation(
                 prompt=prompt,
@@ -2514,6 +2770,10 @@ def create_app(
                 model=str(model) if model is not None else None,
                 workspace_path=str(workspace_path) if workspace_path is not None else None,
                 db=state.db,
+                worktree_mode=worktree_mode,
+                branch_name=str(branch_name) if branch_name is not None else None,
+                folders=folders,
+                permission_preset=str(perm_preset) if perm_preset is not None else None,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
@@ -2549,6 +2809,55 @@ def create_app(
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.get("/api/agy/conversations/{conversation_id}/swarm")
+    async def api_agy_conversation_swarm(conversation_id: str) -> dict[str, Any]:
+        try:
+            return state.agy_bridge.get_swarm_detail(conversation_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
+    @app.post("/api/agy/conversations/{conversation_id}/nudge")
+    async def api_agy_conversation_nudge(conversation_id: str, request: Request) -> dict[str, Any]:
+        if state.host_locked:
+            raise HTTPException(status_code=423, detail="HOST_LOCKED: Cannot nudge agent while Panic Lock is active")
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="JSON object body is required")
+        target_id = str(body.get("targetConversationId") or conversation_id).strip()
+        message = str(body.get("message") or "").strip()
+        try:
+            return await state.agy_bridge.nudge_agent(target_id, message, db=state.db)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.post("/api/agy/upload")
+    async def api_agy_upload(request: Request) -> dict[str, Any]:
+        if state.host_locked:
+            raise HTTPException(status_code=423, detail="HOST_LOCKED: File upload blocked while Panic Lock is active")
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="JSON object body is required")
+        project_path = str(body.get("projectPath") or body.get("workspacePath") or "")
+        filename = str(body.get("filename") or body.get("fileName") or "")
+        data_b64 = str(body.get("dataBase64") or "")
+        status_code, payload = state.agy_bridge.save_workspace_upload(
+            project_path=project_path,
+            filename=filename,
+            data_base64=data_b64,
+            db=state.db,
+        )
+        if status_code != 200:
+            raise HTTPException(status_code=status_code, detail=payload.get("detail", "Upload failed"))
+        return payload
 
     @app.get("/api/agy/conversations/{conversation_id}/artifact")
     async def api_agy_conversation_artifact(
@@ -2586,6 +2895,52 @@ def create_app(
     @app.get("/api/agy/customizations")
     async def api_agy_customizations() -> dict[str, Any]:
         return state.agy_bridge.list_customizations()
+
+    @app.get("/api/agy/ports")
+    async def api_agy_ports() -> dict[str, Any]:
+        state._bind_sibling_modules()
+        zerog_port = int(os.environ.get("ZEROG_PORT", "8790"))
+        if _preview_proxy_mod is not None and hasattr(_preview_proxy_mod, "list_active_dev_ports"):
+            ports = _preview_proxy_mod.list_active_dev_ports(
+                host_telemetry=state.host_telemetry,
+                zerog_port=zerog_port,
+            )
+        else:
+            ports = []
+        return {"ports": ports}
+
+    @app.get("/api/agy/autostart")
+    async def api_agy_autostart_get() -> dict[str, Any]:
+        if state.startup_manager is None:
+            raise HTTPException(status_code=501, detail="StartupAndNotifyManager unavailable")
+        return state.startup_manager.get_autostart_status(db=state.db)
+
+    @app.post("/api/agy/autostart")
+    async def api_agy_autostart_post(request: Request) -> dict[str, Any]:
+        if state.startup_manager is None:
+            raise HTTPException(status_code=501, detail="StartupAndNotifyManager unavailable")
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="JSON object body is required")
+        cur = state.startup_manager.get_autostart_status(db=state.db)
+        enabled = bool(body.get("enabled", cur.get("enabled", True)))
+        notify_email = str(body.get("notifyEmail") or cur.get("notifyEmail") or "blagoslov333@gmail.com")
+        auto_email = bool(body.get("autoEmailOnTunnelChange", cur.get("autoEmailOnTunnelChange", True)))
+        status = state.startup_manager.set_autostart(
+            db=state.db,
+            enabled=enabled,
+            notify_email=notify_email,
+            auto_email=auto_email,
+        )
+        if body.get("sendTestNow") is True and not state.host_locked:
+            pub_url = state.get_public_url()
+            pairing = state.auth.get_active_pairing(public_url=pub_url)
+            notify_res = await state.startup_manager.notify_tunnel_url(state, pub_url, pairing, force=True)
+            status = {**status, "notifyResult": notify_res}
+        return status
 
     @app.post("/api/agy/terminal/exec")
     async def api_agy_terminal_exec(request: Request) -> dict[str, Any]:
@@ -2782,6 +3137,69 @@ def create_app(
             state.ws_clients.discard(websocket)
 
     # -------------------------------------------------------------------------
+    # Localhost Dev Port Reverse Proxy (/preview/{port}/...) & Gemini Voice (/ws/voice)
+    # -------------------------------------------------------------------------
+
+    @app.api_route(
+        "/preview/{port}",
+        methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+    )
+    @app.api_route(
+        "/preview/{port}/{full_path:path}",
+        methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+    )
+    async def proxy_dev_port(port: int, request: Request, full_path: str = "") -> Response:
+        if _preview_proxy_mod is None or not hasattr(_preview_proxy_mod, "proxy_localhost_request"):
+            raise HTTPException(status_code=501, detail="Preview proxy module unavailable")
+        zerog_port = int(os.environ.get("ZEROG_PORT", "8790"))
+        body = await request.body()
+        status_code, resp_headers, resp_body = await _preview_proxy_mod.proxy_localhost_request(
+            port=port,
+            full_path=full_path,
+            method=request.method,
+            query_string=str(request.url.query or ""),
+            headers=dict(request.headers),
+            body=body,
+            zerog_port=zerog_port,
+        )
+        return Response(content=resp_body, status_code=status_code, headers=resp_headers)
+
+    @app.websocket("/ws/voice")
+    async def ws_voice(
+        websocket: WebSocket,
+        conversationId: str = Query(default=""),
+        voiceName: str = Query(default="Puck"),
+    ) -> None:
+        if _is_non_loopback_or_auth_forced(websocket.headers.get("host")):
+            tok = _extract_auth_token_from_headers_or_query(
+                websocket.headers,
+                websocket.query_params,
+                websocket.cookies,
+            )
+            if not state.auth.verify_mobile_token(tok):
+                await websocket.close(code=4401)
+                return
+
+        if state.voice_bridge is None:
+            await websocket.accept()
+            await websocket.send_json(
+                {
+                    "type": "voice.mode",
+                    "mode": "fallback_web_speech",
+                    "reason": "VoiceLiveBridge module unavailable",
+                }
+            )
+            await websocket.close()
+            return
+
+        await state.voice_bridge.handle_voice_websocket(
+            websocket,
+            state,
+            conversation_id=conversationId.strip() or None,
+            voice_name=voiceName.strip() or "Puck",
+        )
+
+    # -------------------------------------------------------------------------
     # Static PWA & Desktop Aux Pane (?view=auxpane) Serving
     # -------------------------------------------------------------------------
 
@@ -2791,7 +3209,12 @@ def create_app(
 
     @app.get("/{full_path:path}")
     async def serve_pwa(full_path: str, request: Request) -> Response:
-        if full_path.startswith("api/") or full_path.startswith("ws/"):
+        if (
+            full_path.startswith("api/")
+            or full_path.startswith("ws/")
+            or full_path == "preview"
+            or full_path.startswith("preview/")
+        ):
             raise HTTPException(status_code=404, detail="API endpoint not found")
 
         dist_dir = Path(__file__).resolve().parent.parent / "web" / "dist"

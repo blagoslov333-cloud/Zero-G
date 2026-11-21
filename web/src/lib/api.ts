@@ -1,20 +1,28 @@
 import type {
   AgentGateMode,
   AgyArtifactContentResponse,
+  AgyAutostartStatus,
   AgyConversationDetail,
   AgyConversationSummary,
   AgyCreateConversationRequest,
   AgyCreateConversationResponse,
   AgyCustomizationsResponse,
+  AgyDevPort,
   AgyFileReadResponse,
   AgyFilesListResponse,
   AgyProject,
+  AgyProjectConfigUpsertRequest,
   AgySendMessageResponse,
+  AgySettingsResponse,
+  AgySettingsUpdateRequest,
+  AgySwarmDetailResponse,
   AgyTerminalExecResponse,
+  AgyUploadResponse,
   ApprovalDecisionRequest,
   ApprovalItem,
   ArtifactItem,
   AutomationItem,
+  GitCommitPushResponse,
   GitStatusResponse,
   HookConfigSnippet,
   HostGlanceSnapshot,
@@ -116,6 +124,15 @@ export function setAuthToken(token: string | null): void {
   }
 }
 
+export function buildPreviewUrl(port: number, subpath = ""): string {
+  const cleanSub = subpath.replace(/^\/+/, "");
+  const base = `/preview/${port}/${cleanSub}`;
+  const tok = getAuthToken();
+  if (!tok) return base;
+  const sep = base.includes("?") ? "&" : "?";
+  return `${base}${sep}token=${encodeURIComponent(tok)}`;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = getAuthToken();
   const headers = new Headers(init.headers || {});
@@ -135,7 +152,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!res.ok) {
     let detail = `HTTP ${res.status}`;
     try {
-      const errBody = (await res.json()) as { detail?: string; error?: string };
+      const errBody = (await res.json()) as {
+        detail?: string;
+        error?: string;
+      };
       detail = errBody.detail || errBody.error || detail;
     } catch {
       const txt = await res.text().catch(() => "");
@@ -370,6 +390,12 @@ export const api = {
       body: JSON.stringify({ repoPath, filePath }),
     }),
 
+  gitCommitAndPush: (body: { repoPath: string; message: string; push: boolean }) =>
+    request<GitCommitPushResponse>("/api/git/commit-push", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
   mergeWorktree: (repoPath: string, worktreePath: string, branchName: string) =>
     request<{ ok: boolean }>("/api/git/worktree/merge", {
       method: "POST",
@@ -450,11 +476,48 @@ export const api = {
       body: JSON.stringify({ cwd: cwd || null }),
     }),
 
-  /* Antigravity Desktop Bridge (/api/agy/*) */
+  /* =========================================================================
+   * Antigravity Desktop Bridge & Native Remote Control (/api/agy/*)
+   * ========================================================================= */
+  getAgySettings: () => request<AgySettingsResponse>("/api/agy/settings"),
+
+  updateAgySettings: (body: AgySettingsUpdateRequest) =>
+    request<AgySettingsResponse>("/api/agy/settings", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  getAgyAutostart: () => request<AgyAutostartStatus>("/api/agy/autostart"),
+
+  updateAgyAutostart: (body: {
+    enabled?: boolean;
+    notifyEmail?: string;
+    autoEmailOnTunnelChange?: boolean;
+    sendTestNow?: boolean;
+  }) =>
+    request<AgyAutostartStatus>("/api/agy/autostart", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
   getAgyProjects: async (): Promise<AgyProject[]> => {
-    const data = await request<{ projects?: AgyProject[] }>("/api/agy/projects");
-    return data.projects || [];
+    const data = await request<{ projects?: AgyProject[] } | AgyProject[]>(
+      "/api/agy/projects"
+    );
+    return Array.isArray(data) ? data : data.projects || [];
   },
+
+  upsertAgyProjectConfig: (body: AgyProjectConfigUpsertRequest) =>
+    request<{ ok: boolean; project?: AgyProject }>("/api/agy/projects/configs", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  deleteAgyProjectConfig: (id: string) =>
+    request<{ ok: boolean }>(
+      `/api/agy/projects/configs/${encodeURIComponent(id)}`,
+      { method: "DELETE" }
+    ),
 
   getAgyConversations: async (opts?: {
     projectPath?: string;
@@ -491,6 +554,30 @@ export const api = {
       }
     ),
 
+  getAgySwarmDetail: (conversationId: string) =>
+    request<AgySwarmDetailResponse>(
+      `/api/agy/conversations/${encodeURIComponent(conversationId)}/swarm`
+    ),
+
+  nudgeAgyConversation: (conversationId: string, message: string) =>
+    request<{ ok: boolean; conversationId?: string; deliveredVia?: string }>(
+      `/api/agy/conversations/${encodeURIComponent(conversationId)}/nudge`,
+      {
+        method: "POST",
+        body: JSON.stringify({ message }),
+      }
+    ),
+
+  uploadWorkspaceFile: (body: {
+    projectPath: string;
+    filename: string;
+    dataBase64: string;
+  }) =>
+    request<AgyUploadResponse>("/api/agy/upload", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
   getAgyArtifact: (conversationId: string, path: string) =>
     request<AgyArtifactContentResponse>(
       `/api/agy/conversations/${encodeURIComponent(conversationId)}/artifact?path=${encodeURIComponent(path)}`
@@ -512,6 +599,13 @@ export const api = {
     return request<AgyFileReadResponse>(
       `/api/agy/files/read?${params.toString()}`
     );
+  },
+
+  getAgyPorts: async (): Promise<AgyDevPort[]> => {
+    const data = await request<{ ports?: AgyDevPort[] } | AgyDevPort[]>(
+      "/api/agy/ports"
+    );
+    return Array.isArray(data) ? data : data.ports || [];
   },
 
   getAgyCustomizations: () =>

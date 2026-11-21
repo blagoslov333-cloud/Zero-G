@@ -27,6 +27,7 @@ vapid_keys.json
 data/
 logs/
 .0g-worktrees/
+.antigravity_uploads/
 
 # OS / IDE
 .DS_Store

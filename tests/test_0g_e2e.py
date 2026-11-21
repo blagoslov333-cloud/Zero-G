@@ -1157,3 +1157,352 @@ else:
         assert client.post("/api/agy/terminal/exec", json={"command": "echo nope"}).status_code == 423
         assert client.post("/api/panic/unlock", json={}).status_code == 200
 
+
+# ---------------------------------------------------------------------------
+# 9. Native Antigravity Remote Control Superpowers E2E
+# ---------------------------------------------------------------------------
+
+
+def test_native_remote_superpowers_e2e(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import sqlite3
+
+    scratch_root = tmp_path / "scratch"
+    repo_a = scratch_root / "repo-alpha"
+    repo_b = scratch_root / "repo-beta"
+    repo_a.mkdir(parents=True)
+    repo_b.mkdir(parents=True)
+
+    # Initialize repo_a as a real git repository
+    for cmd in (
+        ["git", "init"],
+        ["git", "config", "user.email", "test@0g.local"],
+        ["git", "config", "user.name", "Test User"],
+    ):
+        subprocess.run(cmd, cwd=str(repo_a), check=True, capture_output=True)
+    (repo_a / "README.md").write_text("# Alpha Repo\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=str(repo_a), check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=str(repo_a), check=True, capture_output=True)
+    (repo_b / "notes.md").write_text("# Beta Notes\n", encoding="utf-8")
+
+    # Minimal Antigravity fixture with ask_question + exit_plan_mode + swarm board
+    agy_dir = tmp_path / "agy"
+    conv_id = "22222222-3333-4444-5555-666666666666"
+    sub_id = "sub-2222-1111"
+    conv_brain = agy_dir / "brain" / conv_id
+    logs_dir = conv_brain / ".system_generated" / "logs"
+    swarm_dir = conv_brain / ".system_generated" / "swarm"
+    sub_logs = agy_dir / "brain" / sub_id / ".system_generated" / "logs"
+    logs_dir.mkdir(parents=True)
+    swarm_dir.mkdir(parents=True)
+    sub_logs.mkdir(parents=True)
+
+    (swarm_dir / "plan.json").write_text(
+        json.dumps(
+            {
+                "goal": {"title": "Native UI Plan", "line": "Verify swarm overview"},
+                "tasks": {"worker-1": "Audit layout"},
+                "threads": [{"id": "t1", "title": "UI", "goal": "Audit", "tasks": ["worker-1"]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (swarm_dir / "board.jsonl").write_text(
+        json.dumps({"seq": 1, "agent": "worker-1", "text": "Audit done", "time": "2026-11-21 15:00:00"}) + "\n",
+        encoding="utf-8",
+    )
+
+    transcript_steps = [
+        {"step_index": 0, "type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "Help me design this"},
+        {
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "source": "MODEL",
+            "content": "Choose a mode and review the plan.",
+            "tool_calls": [
+                {
+                    "name": "ask_question",
+                    "args": {
+                        "questions": [
+                            {
+                                "question": "Which layout mode?",
+                                "options": ["Software Engineering", "Knowledge Work"],
+                                "is_multi_select": False,
+                            }
+                        ]
+                    },
+                },
+                {
+                    "name": "exit_plan_mode",
+                    "args": {"title": "UI Overhaul Plan", "plan": "# Step 1\nBuild single canvas."},
+                },
+            ],
+        },
+    ]
+    (logs_dir / "transcript.jsonl").write_text(
+        "\n".join(json.dumps(s) for s in transcript_steps) + "\n",
+        encoding="utf-8",
+    )
+    (sub_logs / "transcript.jsonl").write_text(
+        json.dumps({"step_index": 0, "type": "PLANNER_RESPONSE", "content": "Subagent finished check"}) + "\n",
+        encoding="utf-8",
+    )
+
+    db_file = agy_dir / "conversation_summaries.db"
+    con = sqlite3.connect(db_file)
+    con.execute(
+        "CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', preview TEXT NOT NULL DEFAULT '', step_count INTEGER NOT NULL DEFAULT 0, last_modified_time TEXT NOT NULL, workspace_uris TEXT NOT NULL, status TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '', project_id TEXT NOT NULL DEFAULT '', agent_name TEXT NOT NULL DEFAULT '', parent_conversation_id TEXT NOT NULL DEFAULT '', not_fully_idle INTEGER NOT NULL DEFAULT 0, killed INTEGER NOT NULL DEFAULT 0)"
+    )
+    con.execute(
+        "INSERT INTO conversation_summaries VALUES (?, ?, '', ?, ?, ?, ?, '', 'p1', '', '', 0, 0)",
+        (conv_id, "Native Superpowers", 2, "2026-11-21T15:00:00Z", json.dumps([repo_a.resolve().as_uri()]), "CASCADE_RUN_STATUS_IDLE"),
+    )
+    con.execute(
+        "INSERT INTO conversation_summaries VALUES (?, ?, '', ?, ?, ?, ?, '', 'p1', 'worker-1', ?, 0, 0)",
+        (sub_id, "Worker 1", 1, "2026-11-21T14:59:00Z", json.dumps([repo_a.resolve().as_uri()]), "CASCADE_RUN_STATUS_IDLE", conv_id),
+    )
+    con.commit()
+    con.close()
+
+    mock_agentapi = tmp_path / "mock_agentapi_super.py"
+    mock_log = tmp_path / "agentapi_super_calls.json"
+    mock_agentapi.write_text(
+        f"""import json, sys
+from pathlib import Path
+log_p = Path({str(mock_log)!r})
+calls = json.loads(log_p.read_text(encoding='utf-8')) if log_p.is_file() else []
+calls.append(sys.argv[1:])
+log_p.write_text(json.dumps(calls), encoding='utf-8')
+print(json.dumps({{"conversationId": "33333333-4444-5555-6666-777777777777"}}))
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("ZEROG_AGY_DIR", str(agy_dir))
+    monkeypatch.setenv("ZEROG_PROJECT_ROOTS", str(scratch_root))
+    monkeypatch.setenv("ZEROG_AGENTAPI_BIN", str(mock_agentapi))
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+    # Start tiny local dev HTTP server for /preview/{port}/ tests
+    class _DevHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if self.path == "/assets/app.js":
+                body = b"console.log('dev-app-ok');"
+                self.send_response(200)
+                self.send_header("Content-Type", "application/javascript")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            html_body = b"<!doctype html><html><head><title>Dev</title></head><body><script src=\"/assets/app.js\"></script></body></html>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(html_body)))
+            self.end_headers()
+            self.wfile.write(html_body)
+
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+            return
+
+    dev_server = http.server.HTTPServer(("127.0.0.1", 0), _DevHandler)
+    dev_port = dev_server.server_address[1]
+    dev_thread = threading.Thread(target=dev_server.serve_forever, daemon=True)
+    dev_thread.start()
+
+    try:
+        data_dir = tmp_path / "0g_data"
+        app = create_app(data_dir=data_dir)
+        with TestClient(app) as client:
+            bridge_tok = _read_bridge_token(data_dir)
+            hook_headers = {"X-0G-Bridge-Token": bridge_tok}
+
+            # 1. Settings & Interface Layout
+            r_set = client.post(
+                "/api/agy/settings",
+                json={"interfaceLayout": "knowledge_work", "permissionPreset": "request_review"},
+            )
+            assert r_set.status_code == 200
+            assert r_set.json()["interfaceLayout"] == "knowledge_work"
+            assert r_set.json()["permissionPreset"] == "request_review"
+            assert r_set.json()["voiceCapabilities"]["fallback"] == "web_speech"
+
+            # Verify request_review pauses even Tier-0 `git status` when phone hold is active!
+            r_req_rev = client.post(
+                "/api/hooks/dispatch",
+                headers={**hook_headers, "X-0G-Hold-Seconds": "0.2"},
+                json={
+                    "provider": "antigravity",
+                    "hookEventName": "PreToolUse",
+                    "conversationId": "conv-preset",
+                    "cwd": str(repo_a),
+                    "toolCall": {"id": "tc-rr", "name": "run_command", "arguments": {"CommandLine": "git status"}},
+                },
+            )
+            assert r_req_rev.status_code == 200
+            assert r_req_rev.json()["decision"] == "force_ask"
+
+            # Reset global preset to default & switch back to software_engineering
+            assert client.post(
+                "/api/agy/settings",
+                json={"interfaceLayout": "software_engineering", "permissionPreset": "default"},
+            ).status_code == 200
+
+            # 2. Multi-Folder Project Config + Per-Project Permission Preset Override ("auto")
+            r_proj_cfg = client.post(
+                "/api/agy/projects/configs",
+                json={
+                    "id": "proj-bundle",
+                    "name": "Dual Bundle",
+                    "folders": [str(repo_a), str(repo_b)],
+                    "permissionPreset": "auto",
+                    "defaultWorktreeMode": "worktree",
+                },
+            )
+            assert r_proj_cfg.status_code == 200
+            bundle = r_proj_cfg.json()["project"]
+            assert bundle["permissionPreset"] == "auto"
+            assert len(bundle["folders"]) == 2
+
+            # Verify merged /api/agy/projects includes Dual Bundle
+            merged = client.get("/api/agy/projects").json()["projects"]
+            assert any(p["id"] == "proj-bundle" and len(p["folders"]) == 2 for p in merged)
+
+            # Verify Tier-1 command inside repo_a auto-allows because repo_a belongs to "auto" project preset!
+            r_auto_proj = client.post(
+                "/api/hooks/dispatch",
+                headers=hook_headers,
+                json={
+                    "provider": "antigravity",
+                    "hookEventName": "PreToolUse",
+                    "conversationId": "conv-preset",
+                    "cwd": str(repo_a),
+                    "toolCall": {"id": "tc-auto", "name": "run_command", "arguments": {"CommandLine": "pytest tests"}},
+                },
+            )
+            assert r_auto_proj.status_code == 200
+            assert r_auto_proj.json()["decision"] == "allow"
+
+            # 3. Worktree Mode on /api/agy/conversations/new
+            r_wt_conv = client.post(
+                "/api/agy/conversations/new",
+                json={
+                    "prompt": "Refactor dual repo",
+                    "workspacePath": str(repo_a),
+                    "folders": [str(repo_a), str(repo_b)],
+                    "worktreeMode": "worktree",
+                    "branchName": "agy-wt-test",
+                },
+            )
+            assert r_wt_conv.status_code == 200
+            wt_res = r_wt_conv.json()
+            assert wt_res["ok"] is True
+            assert wt_res["branchName"] == "agy-wt-test"
+            assert os.path.isdir(wt_res["worktreePath"])
+            # Cleanup created worktree cleanly
+            client.post(
+                "/api/git/worktree/discard",
+                json={"repoPath": str(repo_a), "worktreePath": wt_res["worktreePath"], "branchName": "agy-wt-test"},
+            )
+
+            # 4. File/Photo Upload into workspace + security blocks
+            png_b64 = base64.b64encode(b"\x89PNG\r\n\x1a\n").decode("ascii")
+            r_up = client.post(
+                "/api/agy/upload",
+                json={"projectPath": str(repo_a), "filename": "phone shot.png", "dataBase64": f"data:image/png;base64,{png_b64}"},
+            )
+            assert r_up.status_code == 200
+            up_data = r_up.json()
+            assert up_data["ok"] is True
+            assert up_data["relPath"].startswith(".antigravity_uploads/")
+            assert up_data["mentionToken"] == f"@{up_data['relPath']}"
+            assert (repo_a / up_data["relPath"]).is_file()
+
+            assert client.post(
+                "/api/agy/upload",
+                json={"projectPath": str(repo_a), "filename": ".env", "dataBase64": png_b64},
+            ).status_code == 403
+            assert client.post(
+                "/api/agy/upload",
+                json={"projectPath": str(repo_a), "filename": "payload.exe", "dataBase64": png_b64},
+            ).status_code == 403
+
+            # 5. Git Commit (push=False)
+            (repo_a / "feature.txt").write_text("hello from mobile\n", encoding="utf-8")
+            r_commit = client.post(
+                "/api/git/commit-push",
+                json={"repoPath": str(repo_a), "message": "Add feature.txt from mobile", "push": False},
+            )
+            assert r_commit.status_code == 200
+            c_data = r_commit.json()
+            assert c_data["ok"] is True
+            assert c_data["committed"] is True
+            assert c_data["pushed"] is False
+            assert len(c_data["commitSha"]) >= 7
+
+            # 6. Interactive Plan Review, Ask Question, Swarm Board & Nudge
+            detail = client.get(f"/api/agy/conversations/{conv_id}").json()
+            asst_msg = detail["messages"][1]
+            assert asst_msg["pendingQuestions"][0]["question"] == "Which layout mode?"
+            assert asst_msg["pendingQuestions"][0]["options"] == ["Software Engineering", "Knowledge Work"]
+            assert asst_msg["planReview"]["title"] == "UI Overhaul Plan"
+            assert asst_msg["planReview"]["canProceed"] is True
+
+            swarm_data = client.get(f"/api/agy/conversations/{conv_id}/swarm").json()
+            assert swarm_data["hasSwarm"] is True
+            assert swarm_data["boardMessages"][0]["text"] == "Audit done"
+            assert swarm_data["subagents"][0]["latestMessage"] == "Subagent finished check"
+
+            r_nudge = client.post(
+                f"/api/agy/conversations/{conv_id}/nudge",
+                json={"targetConversationId": sub_id, "message": "Wrap up now"},
+            )
+            assert r_nudge.status_code == 200
+            assert r_nudge.json()["conversationId"] == sub_id
+
+            # 7. Live Localhost Preview Proxy (/preview/{port}/) + Loop Block + Non-loopback Auth & Cookie
+            assert client.get("/api/agy/ports").status_code == 200
+            assert client.get("/preview/8790/").status_code == 400
+            assert client.get("/preview/22/").status_code == 400
+
+            r_prev = client.get(f"/preview/{dev_port}/")
+            assert r_prev.status_code == 200
+            assert f'<base href="/preview/{dev_port}/">' in r_prev.text
+            assert f'src="/preview/{dev_port}/assets/app.js"' in r_prev.text
+
+            # Non-loopback auth enforcement + ?token= sets zerog_session cookie
+            pair_code = client.post("/api/pairing/code", json={}).json()["code"]
+            mob_tok = client.post("/api/pairing/claim", json={"code": pair_code}).json()["sessionToken"]
+            client.cookies.clear()
+            ext_headers = {"Host": "remote.trycloudflare.com"}
+            assert client.get(f"/preview/{dev_port}/", headers=ext_headers).status_code == 401
+            r_ext_ok = client.get(f"/preview/{dev_port}/?token={mob_tok}", headers=ext_headers)
+            assert r_ext_ok.status_code == 200
+            assert "zerog_session" in r_ext_ok.cookies
+            r_ext_asset = client.get(f"/preview/{dev_port}/assets/app.js", headers=ext_headers)
+            assert r_ext_asset.status_code == 200
+            assert "dev-app-ok" in r_ext_asset.text
+
+            # 8. /ws/voice WebSocket fallback + tool invocation
+            with client.websocket_connect(f"/ws/voice?conversationId={conv_id}") as ws_v:
+                mode_frame = ws_v.receive_json()
+                assert mode_frame["type"] == "voice.mode"
+                assert mode_frame["mode"] == "fallback_web_speech"
+                ws_v.send_json({"type": "text_command", "text": "Summarize changes"})
+                tr_frame = ws_v.receive_json()
+                assert tr_frame["type"] == "voice.transcript"
+                tool_frame = ws_v.receive_json()
+                assert tool_frame["type"] == "voice.tool_result"
+                assert tool_frame["result"]["ok"] is True
+                reply_frame = ws_v.receive_json()
+                assert reply_frame["type"] == "voice.assistant_text"
+
+            # 9. /api/agy/autostart + custom project deletion
+            r_auto_cfg = client.get("/api/agy/autostart")
+            assert r_auto_cfg.status_code == 200
+            assert "notifyEmail" in r_auto_cfg.json()
+            assert client.delete("/api/agy/projects/configs/proj-bundle").json()["ok"] is True
+    finally:
+        dev_server.shutdown()
+        dev_server.server_close()
+
+

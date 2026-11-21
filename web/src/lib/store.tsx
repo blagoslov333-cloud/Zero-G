@@ -9,21 +9,27 @@ import React, {
 } from "react";
 import type {
   ActiveMobilePrompt,
-  ActiveTab,
   AgentGateMode,
+  AgyAutostartStatus,
   AgyConversationDetail,
   AgyConversationSummary,
   AgyCreateConversationRequest,
   AgyCreateConversationResponse,
   AgyCustomizationsResponse,
+  AgyDevPort,
   AgyProject,
+  AgyProjectConfigUpsertRequest,
   AgySendMessageResponse,
+  AgySwarmDetailResponse,
+  AgyUploadFileItem,
+  AgyVoiceCapabilities,
   ApprovalDecisionRequest,
   ApprovalItem,
   ArtifactItem,
   AutomationItem,
   HookConfigSnippet,
   HostGlanceSnapshot,
+  InterfaceLayout,
   MacroShortcut,
   MobileToolCreateRequest,
   MobileToolRequestFrame,
@@ -31,16 +37,21 @@ import type {
   NotifyCardItem,
   OutboxItem,
   PairingCodeResponse,
+  PermissionPreset,
   PowerGearUpdateRequest,
   ProjectSummary,
   PtySessionInfo,
+  RightAuxTab,
   RuleEntry,
   SessionSummary,
+  SettingsSection,
   StreamEnvelope,
   ThemePreset,
   TimelineStep,
   TunnelBackend,
   TunnelStatus,
+  VoicePlaybackSpeed,
+  WorktreeMode,
   WorktreeTaskRequest,
 } from "../types/contracts";
 import {
@@ -58,24 +69,13 @@ import {
   removeOutbox,
   updateOutboxItem,
 } from "./outbox";
+import { voiceClient, type VoiceClientSnapshot } from "./voiceClient";
 import { wsClient, type WsConnectionStatus } from "./ws";
 
 const THEME_KEY = "0g_theme_preset";
-
-function parseInitialTab(): ActiveTab {
-  if (typeof window === "undefined") return "chat";
-  const tab = new URLSearchParams(window.location.search).get("tab");
-  if (
-    tab === "chat" ||
-    tab === "projects" ||
-    tab === "terminal" ||
-    tab === "laptop"
-  ) {
-    return tab;
-  }
-  if (tab === "host" || tab === "tools") return "laptop";
-  return "chat";
-}
+const LAYOUT_KEY = "0g_interface_layout";
+const PRESET_KEY = "0g_permission_preset";
+const RIGHT_AUX_KEY = "0g_right_aux_open";
 
 function parseAuxPaneFlag(): boolean {
   if (typeof window === "undefined") return false;
@@ -91,12 +91,99 @@ function parseInitialTheme(): ThemePreset {
   return "obsidian";
 }
 
+function parseInitialLayout(): InterfaceLayout {
+  if (typeof window === "undefined") return "software_engineering";
+  const saved = localStorage.getItem(LAYOUT_KEY);
+  if (saved === "software_engineering" || saved === "knowledge_work") {
+    return saved;
+  }
+  return "software_engineering";
+}
+
+function parseInitialPreset(): PermissionPreset {
+  if (typeof window === "undefined") return "default";
+  const saved = localStorage.getItem(PRESET_KEY);
+  if (
+    saved === "request_review" ||
+    saved === "default" ||
+    saved === "auto" ||
+    saved === "turbo"
+  ) {
+    return saved;
+  }
+  return "default";
+}
+
+function parseInitialLeftSidebar(): boolean {
+  if (typeof window === "undefined") return true;
+  return window.innerWidth >= 1024;
+}
+
+function parseInitialRightAux(): boolean {
+  if (typeof window === "undefined") return false;
+  if (window.innerWidth < 1280) return false;
+  const saved = localStorage.getItem(RIGHT_AUX_KEY);
+  if (saved === "true") return true;
+  if (saved === "false") return false;
+  return false;
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+      } else {
+        reject(new Error("Failed to read file"));
+      }
+    };
+    reader.onerror = () => reject(new Error("Failed to read file"));
+    reader.readAsDataURL(file);
+  });
+}
+
 export interface ZeroGStoreValue {
   theme: ThemePreset;
   setTheme: (theme: ThemePreset) => void;
   isAuxPane: boolean;
-  activeTab: ActiveTab;
-  setActiveTab: (tab: ActiveTab) => void;
+
+  // Single-Canvas Shell Drawers & Modals
+  leftSidebarOpen: boolean;
+  setLeftSidebarOpen: (open: boolean) => void;
+  toggleLeftSidebar: () => void;
+  rightAuxOpen: boolean;
+  setRightAuxOpen: (open: boolean) => void;
+  toggleRightAux: () => void;
+  rightAuxTab: RightAuxTab;
+  setRightAuxTab: (tab: RightAuxTab) => void;
+  openRightAuxTab: (
+    tab: RightAuxTab,
+    opts?: { artifactPath?: string | null; previewPort?: number | null }
+  ) => void;
+  focusedArtifactPath: string | null;
+  setFocusedArtifactPath: (path: string | null) => void;
+
+  settingsModalOpen: boolean;
+  settingsSection: SettingsSection;
+  openSettingsModal: (section?: SettingsSection) => void;
+  closeSettingsModal: () => void;
+
+  // Antigravity Global Settings & Autostart
+  interfaceLayout: InterfaceLayout;
+  setInterfaceLayout: (layout: InterfaceLayout) => Promise<void>;
+  permissionPreset: PermissionPreset;
+  setPermissionPreset: (preset: PermissionPreset) => Promise<void>;
+  autostartStatus: AgyAutostartStatus | null;
+  updateAutostart: (body: {
+    enabled?: boolean;
+    notifyEmail?: string;
+    autoEmailOnTunnelChange?: boolean;
+    sendTestNow?: boolean;
+  }) => Promise<AgyAutostartStatus>;
+  voiceCapabilities: AgyVoiceCapabilities | null;
+
+  // Connection & Pairing
   wsStatus: WsConnectionStatus;
   lastSeq: number;
   loading: boolean;
@@ -107,6 +194,7 @@ export interface ZeroGStoreValue {
   claimPairing: (code: string) => Promise<void>;
   refreshAll: () => Promise<void>;
 
+  // Core Sessions & Outbox
   projects: ProjectSummary[];
   sessions: SessionSummary[];
   selectedProjectId: string | null;
@@ -124,6 +212,7 @@ export interface ZeroGStoreValue {
   flushOutboxNow: () => Promise<void>;
   discardOutboxItem: (clientMsgId: string) => Promise<void>;
 
+  // Approvals, Rules & Host Controls
   approvals: ApprovalItem[];
   decideApproval: (id: string, req: ApprovalDecisionRequest) => Promise<void>;
   rules: RuleEntry[];
@@ -168,21 +257,46 @@ export interface ZeroGStoreValue {
   pushNotifyCard: (card: NotifyCardItem) => void;
   openPromptModal: (prompt: ActiveMobilePrompt) => void;
 
-  // Antigravity Desktop Bridge (/api/agy/*)
+  // Antigravity Native Remote Control (/api/agy/*)
   agyProjects: AgyProject[];
+  selectedProjectPath: string | null;
+  setSelectedProjectPath: (path: string | null) => void;
+  selectedProject: AgyProject | null;
+  upsertProjectConfig: (req: AgyProjectConfigUpsertRequest) => Promise<void>;
+  deleteProjectConfig: (projectId: string) => Promise<void>;
+
   agyConversations: AgyConversationSummary[];
   activeConversationId: string | null;
   setActiveConversationId: (id: string | null) => void;
+  isNewChatDraft: boolean;
+  startFreshNewConversationView: (projectPath?: string | null) => void;
   activeConversationDetail: AgyConversationDetail | null;
+  swarmDetail: AgySwarmDetailResponse | null;
+  refreshSwarmDetail: (conversationId: string) => Promise<void>;
+  nudgeConversation: (conversationId: string, message: string) => Promise<void>;
   agyConversationLoading: boolean;
   agyError: string | null;
-  selectedProjectPath: string | null;
-  setSelectedProjectPath: (path: string | null) => void;
   customizations: AgyCustomizationsResponse | null;
+
   composerDraft: string;
   setComposerDraft: React.Dispatch<React.SetStateAction<string>>;
-  pendingNewChatOpen: boolean;
-  setPendingNewChatOpen: (open: boolean) => void;
+  selectedModel: string;
+  setSelectedModel: (model: string) => void;
+  worktreeMode: WorktreeMode;
+  setWorktreeMode: (mode: WorktreeMode) => void;
+  worktreeBranch: string;
+  setWorktreeBranch: (branch: string) => void;
+  uploadedAttachments: AgyUploadFileItem[];
+  uploadingAttachment: boolean;
+  uploadAttachment: (file: File) => Promise<AgyUploadFileItem>;
+  removeUploadedAttachment: (relPath: string) => void;
+  clearUploadedAttachments: () => void;
+
+  devPorts: AgyDevPort[];
+  refreshDevPorts: () => Promise<void>;
+  selectedPreviewPort: number | null;
+  setSelectedPreviewPort: (port: number | null) => void;
+
   terminalCwd: string | null;
   setTerminalCwd: (cwd: string | null) => void;
   refreshAgyData: () => Promise<void>;
@@ -194,6 +308,16 @@ export interface ZeroGStoreValue {
     conversationId: string,
     message: string
   ) => Promise<AgySendMessageResponse>;
+
+  // Voice Mode
+  voiceSnapshot: VoiceClientSnapshot;
+  voiceMinimized: boolean;
+  setVoiceMinimized: (minimized: boolean) => void;
+  startVoiceCall: () => Promise<void>;
+  endVoiceCall: () => void;
+  toggleVoiceMic: () => void;
+  toggleVoiceSpeaker: () => void;
+  cycleVoiceSpeed: () => void;
 }
 
 const ZeroGStoreContext = createContext<ZeroGStoreValue | null>(null);
@@ -203,8 +327,34 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 }) => {
   const [theme, setThemeState] = useState<ThemePreset>(parseInitialTheme);
   const [isAuxPane] = useState<boolean>(parseAuxPaneFlag);
-  const [activeTab, setActiveTabState] = useState<ActiveTab>(parseInitialTab);
-  const [wsStatus, setWsStatus] = useState<WsConnectionStatus>(wsClient.getStatus());
+
+  const [leftSidebarOpen, setLeftSidebarOpen] = useState<boolean>(
+    parseInitialLeftSidebar
+  );
+  const [rightAuxOpen, setRightAuxOpenState] = useState<boolean>(
+    parseInitialRightAux
+  );
+  const [rightAuxTab, setRightAuxTabState] = useState<RightAuxTab>("subagents");
+  const [focusedArtifactPath, setFocusedArtifactPath] = useState<string | null>(
+    null
+  );
+
+  const [settingsModalOpen, setSettingsModalOpen] = useState<boolean>(false);
+  const [settingsSection, setSettingsSection] =
+    useState<SettingsSection>("general");
+
+  const [interfaceLayout, setInterfaceLayoutState] =
+    useState<InterfaceLayout>(parseInitialLayout);
+  const [permissionPreset, setPermissionPresetState] =
+    useState<PermissionPreset>(parseInitialPreset);
+  const [autostartStatus, setAutostartStatus] =
+    useState<AgyAutostartStatus | null>(null);
+  const [voiceCapabilities, setVoiceCapabilities] =
+    useState<AgyVoiceCapabilities | null>(null);
+
+  const [wsStatus, setWsStatus] = useState<WsConnectionStatus>(
+    wsClient.getStatus()
+  );
   const [lastSeq, setLastSeq] = useState<number>(wsClient.getLastSeq());
   const [loading, setLoading] = useState<boolean>(true);
   const [apiError, setApiError] = useState<string | null>(null);
@@ -230,7 +380,9 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
   const [macros, setMacros] = useState<MacroShortcut[]>([]);
   const [hostGlance, setHostGlance] = useState<HostGlanceSnapshot | null>(null);
   const [tunnelStatus, setTunnelStatus] = useState<TunnelStatus | null>(null);
-  const [pairingCode, setPairingCode] = useState<PairingCodeResponse | null>(null);
+  const [pairingCode, setPairingCode] = useState<PairingCodeResponse | null>(
+    null
+  );
   const [hookConfigs, setHookConfigs] = useState<HookConfigSnippet[]>([]);
 
   const [ptySessions, setPtySessions] = useState<PtySessionInfo[]>([]);
@@ -243,22 +395,54 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     useState<ActiveMobilePrompt | null>(null);
   const [notifyCards, setNotifyCards] = useState<NotifyCardItem[]>([]);
 
-  // Antigravity Desktop Bridge (/api/agy/*) state
+  // Antigravity Native Remote Control State
   const [agyProjects, setAgyProjects] = useState<AgyProject[]>([]);
-  const [agyConversations, setAgyConversations] = useState<AgyConversationSummary[]>([]);
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [agyConversations, setAgyConversations] = useState<
+    AgyConversationSummary[]
+  >([]);
+  const [activeConversationId, setActiveConversationIdRaw] = useState<
+    string | null
+  >(null);
+  const [isNewChatDraft, setIsNewChatDraft] = useState<boolean>(false);
+  const isNewChatDraftRef = useRef<boolean>(false);
+  isNewChatDraftRef.current = isNewChatDraft;
+
   const [activeConversationDetail, setActiveConversationDetail] =
     useState<AgyConversationDetail | null>(null);
-  const [agyConversationLoading, setAgyConversationLoading] = useState<boolean>(false);
+  const [swarmDetail, setSwarmDetail] =
+    useState<AgySwarmDetailResponse | null>(null);
+  const [agyConversationLoading, setAgyConversationLoading] =
+    useState<boolean>(false);
   const [agyError, setAgyError] = useState<string | null>(null);
-  const [selectedProjectPath, setSelectedProjectPath] = useState<string | null>(null);
+  const [selectedProjectPath, setSelectedProjectPathState] = useState<
+    string | null
+  >(null);
   const [customizations, setCustomizations] =
     useState<AgyCustomizationsResponse | null>(null);
+
   const [composerDraft, setComposerDraft] = useState<string>("");
-  const [pendingNewChatOpen, setPendingNewChatOpen] = useState<boolean>(false);
+  const [selectedModel, setSelectedModel] = useState<string>("");
+  const [worktreeMode, setWorktreeMode] = useState<WorktreeMode>("local");
+  const [worktreeBranch, setWorktreeBranch] = useState<string>("");
+  const [uploadedAttachments, setUploadedAttachments] = useState<
+    AgyUploadFileItem[]
+  >([]);
+  const [uploadingAttachment, setUploadingAttachment] = useState<boolean>(false);
+
+  const [devPorts, setDevPorts] = useState<AgyDevPort[]>([]);
+  const [selectedPreviewPort, setSelectedPreviewPort] = useState<number | null>(
+    null
+  );
+
   const [terminalCwd, setTerminalCwd] = useState<string | null>(null);
   const [pollBoostTick, setPollBoostTick] = useState<number>(0);
   const boostPollUntilRef = useRef<number>(0);
+
+  // Voice Mode State
+  const [voiceSnapshot, setVoiceSnapshot] = useState<VoiceClientSnapshot>(
+    voiceClient.getSnapshot()
+  );
+  const [voiceMinimized, setVoiceMinimized] = useState<boolean>(false);
 
   const handledTicketsRef = useRef<Set<string>>(new Set());
   const mobileToolsRef = useRef<MobileToolSpec[]>([]);
@@ -273,14 +457,172 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     setThemeState(next);
   }, []);
 
-  const setActiveTab = useCallback((tab: ActiveTab) => {
-    setActiveTabState(tab);
-    if (typeof window !== "undefined") {
-      const url = new URL(window.location.href);
-      url.searchParams.set("tab", tab);
-      window.history.replaceState({}, "", url.toString());
+  const toggleLeftSidebar = useCallback(() => {
+    setLeftSidebarOpen((v) => !v);
+  }, []);
+
+  const setRightAuxOpen = useCallback((open: boolean) => {
+    setRightAuxOpenState(open);
+    if (typeof window !== "undefined" && window.innerWidth >= 1280) {
+      localStorage.setItem(RIGHT_AUX_KEY, String(open));
     }
   }, []);
+
+  const toggleRightAux = useCallback(() => {
+    setRightAuxOpenState((prev) => {
+      const next = !prev;
+      if (typeof window !== "undefined" && window.innerWidth >= 1280) {
+        localStorage.setItem(RIGHT_AUX_KEY, String(next));
+      }
+      return next;
+    });
+  }, []);
+
+  const setRightAuxTab = useCallback((tab: RightAuxTab) => {
+    setRightAuxTabState(tab);
+  }, []);
+
+  const openRightAuxTab = useCallback(
+    (
+      tab: RightAuxTab,
+      opts?: { artifactPath?: string | null; previewPort?: number | null }
+    ) => {
+      if (opts?.artifactPath !== undefined) {
+        setFocusedArtifactPath(opts.artifactPath);
+      }
+      if (opts?.previewPort) {
+        setSelectedPreviewPort(opts.previewPort);
+      }
+      setRightAuxTabState(tab);
+      setRightAuxOpen(true);
+    },
+    [setRightAuxOpen]
+  );
+
+  const openSettingsModal = useCallback((section: SettingsSection = "general") => {
+    setSettingsSection(section);
+    setSettingsModalOpen(true);
+  }, []);
+
+  const closeSettingsModal = useCallback(() => {
+    setSettingsModalOpen(false);
+  }, []);
+
+  const setActiveConversationId = useCallback((id: string | null) => {
+    if (id) {
+      setIsNewChatDraft(false);
+      isNewChatDraftRef.current = false;
+    }
+    setActiveConversationIdRaw(id);
+    if (id && voiceClient.getSnapshot().active) {
+      voiceClient.bindConversation(id);
+    }
+  }, []);
+
+  const setSelectedProjectPath = useCallback(
+    (path: string | null) => {
+      setSelectedProjectPathState(path);
+      if (path) {
+        const matched = agyProjects.find(
+          (p) => p.path === path || p.folders?.includes(path)
+        );
+        if (matched?.defaultWorktreeMode) {
+          setWorktreeMode(matched.defaultWorktreeMode);
+        }
+        setTerminalCwd((prev) => prev || path);
+      }
+    },
+    [agyProjects]
+  );
+
+  const startFreshNewConversationView = useCallback(
+    (projectPath?: string | null) => {
+      setIsNewChatDraft(true);
+      isNewChatDraftRef.current = true;
+      setActiveConversationIdRaw(null);
+      setActiveConversationDetail(null);
+      setSwarmDetail(null);
+      if (projectPath !== undefined) {
+        setSelectedProjectPath(projectPath);
+      }
+      if (typeof window !== "undefined" && window.innerWidth < 1024) {
+        setLeftSidebarOpen(false);
+      }
+    },
+    [setSelectedProjectPath]
+  );
+
+  const selectedProject = useMemo<AgyProject | null>(() => {
+    if (!selectedProjectPath) {
+      return agyProjects[0] || null;
+    }
+    return (
+      agyProjects.find(
+        (p) =>
+          p.path === selectedProjectPath ||
+          (p.folders && p.folders.includes(selectedProjectPath))
+      ) || null
+    );
+  }, [agyProjects, selectedProjectPath]);
+
+  const setInterfaceLayout = useCallback(async (layout: InterfaceLayout) => {
+    setInterfaceLayoutState(layout);
+    localStorage.setItem(LAYOUT_KEY, layout);
+    if (layout === "knowledge_work") {
+      setRightAuxTabState((prev) =>
+        prev === "artifacts" || prev === "subagents" ? prev : "artifacts"
+      );
+    }
+    try {
+      const res = await api.updateAgySettings({ interfaceLayout: layout });
+      if (res.interfaceLayout) {
+        setInterfaceLayoutState(res.interfaceLayout);
+      }
+    } catch {
+      // Persisted locally if daemon route is unavailable
+    }
+  }, []);
+
+  const setPermissionPreset = useCallback(async (preset: PermissionPreset) => {
+    setPermissionPresetState(preset);
+    localStorage.setItem(PRESET_KEY, preset);
+    const mappedGate: AgentGateMode =
+      preset === "auto" || preset === "turbo" ? "agent_turbo" : "ask_on_phone";
+    try {
+      const res = await api.updateAgySettings({ permissionPreset: preset });
+      if (res.permissionPreset) {
+        setPermissionPresetState(res.permissionPreset);
+      }
+      if (res.agentGateMode) {
+        setHostGlance((prev) =>
+          prev ? { ...prev, agentGateMode: res.agentGateMode } : prev
+        );
+      } else {
+        setHostGlance((prev) =>
+          prev ? { ...prev, agentGateMode: mappedGate } : prev
+        );
+      }
+    } catch {
+      await api.updateAgentGate(mappedGate).catch(() => {});
+      setHostGlance((prev) =>
+        prev ? { ...prev, agentGateMode: mappedGate } : prev
+      );
+    }
+  }, []);
+
+  const updateAutostart = useCallback(
+    async (body: {
+      enabled?: boolean;
+      notifyEmail?: string;
+      autoEmailOnTunnelChange?: boolean;
+      sendTestNow?: boolean;
+    }) => {
+      const res = await api.updateAgyAutostart(body);
+      setAutostartStatus(res);
+      return res;
+    },
+    []
+  );
 
   const pushNotifyCard = useCallback((card: NotifyCardItem) => {
     setNotifyCards((prev) => [card, ...prev].slice(0, 6));
@@ -310,7 +652,9 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       return;
     }
     for (const item of items) {
-      await updateOutboxItem(item.clientMsgId, { status: "syncing" }).catch(() => {});
+      await updateOutboxItem(item.clientMsgId, { status: "syncing" }).catch(
+        () => {}
+      );
       setOutboxItems(await listOutbox());
       try {
         const res = await api.flushOutboxItem(item);
@@ -328,10 +672,13 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         if (err instanceof ApiError && err.status === 409) {
           await updateOutboxItem(item.clientMsgId, {
             status: "failed",
-            errorReason: err.detail || "State guard conflict (step/HEAD changed)",
+            errorReason:
+              err.detail || "State guard conflict (step/HEAD changed)",
           });
         } else {
-          await updateOutboxItem(item.clientMsgId, { status: "offline-queued" });
+          await updateOutboxItem(item.clientMsgId, {
+            status: "offline-queued",
+          });
           break;
         }
       }
@@ -342,6 +689,16 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
   const discardOutboxItem = useCallback(async (clientMsgId: string) => {
     await removeOutbox(clientMsgId);
     setOutboxItems(await listOutbox());
+  }, []);
+
+  const refreshDevPorts = useCallback(async () => {
+    try {
+      const ports = await api.getAgyPorts();
+      setDevPorts(ports);
+      setSelectedPreviewPort((prev) => prev || ports[0]?.port || null);
+    } catch {
+      // Fallback to hostGlance listeningPorts if /api/agy/ports is not yet up
+    }
   }, []);
 
   const refreshAll = useCallback(async () => {
@@ -364,6 +721,9 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         agyProjRes,
         agyConvRes,
         agyCustRes,
+        agySettingsRes,
+        agyPortsRes,
+        agyAutostartRes,
       ] = await Promise.allSettled([
         api.getProjects(),
         api.getSessions(),
@@ -379,6 +739,9 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         api.getAgyProjects(),
         api.getAgyConversations({ includeSubagents: false, limit: 60 }),
         api.getAgyCustomizations(),
+        api.getAgySettings(),
+        api.getAgyPorts(),
+        api.getAgyAutostart(),
       ]);
 
       const checkAuthErr = (r: PromiseSettledResult<unknown>) =>
@@ -434,11 +797,15 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 
       if (agyProjRes.status === "fulfilled") {
         setAgyProjects(agyProjRes.value);
+        setSelectedProjectPathState(
+          (prev) => prev || agyProjRes.value[0]?.path || null
+        );
         setTerminalCwd((prev) => prev || agyProjRes.value[0]?.path || null);
       }
       if (agyConvRes.status === "fulfilled") {
         setAgyConversations(agyConvRes.value);
-        setActiveConversationId((prev) => {
+        setActiveConversationIdRaw((prev) => {
+          if (isNewChatDraftRef.current) return null;
           if (prev && agyConvRes.value.some((c) => c.id === prev)) return prev;
           return agyConvRes.value[0]?.id || prev || null;
         });
@@ -451,6 +818,44 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       }
       if (agyCustRes.status === "fulfilled") {
         setCustomizations(agyCustRes.value);
+      }
+      if (agySettingsRes.status === "fulfilled") {
+        const s = agySettingsRes.value;
+        if (s.permissionPreset) {
+          setPermissionPresetState(s.permissionPreset);
+          localStorage.setItem(PRESET_KEY, s.permissionPreset);
+        }
+        if (s.interfaceLayout) {
+          setInterfaceLayoutState(s.interfaceLayout);
+          localStorage.setItem(LAYOUT_KEY, s.interfaceLayout);
+        }
+        if (s.autostart) {
+          setAutostartStatus(s.autostart);
+        }
+        if (s.voiceCapabilities) {
+          setVoiceCapabilities(s.voiceCapabilities);
+        }
+      }
+      if (agyAutostartRes.status === "fulfilled") {
+        setAutostartStatus(agyAutostartRes.value);
+      }
+      if (agyPortsRes.status === "fulfilled") {
+        setDevPorts(agyPortsRes.value);
+        setSelectedPreviewPort(
+          (prev) => prev || agyPortsRes.value[0]?.port || null
+        );
+      } else if (glanceRes.status === "fulfilled") {
+        const fallbackPorts: AgyDevPort[] = glanceRes.value.listeningPorts
+          .map((lp) => ({
+            port: Number(lp.port ?? lp.localPort ?? 0),
+            label: lp.label ? String(lp.label) : undefined,
+            process: lp.process ? String(lp.process) : undefined,
+          }))
+          .filter((p) => p.port >= 1024 && p.port <= 65535 && p.port !== 8790);
+        setDevPorts(fallbackPorts);
+        setSelectedPreviewPort(
+          (prev) => prev || fallbackPorts[0]?.port || null
+        );
       }
 
       const allFailed =
@@ -466,7 +871,9 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         setApiError(msg);
       }
     } catch (err) {
-      setApiError(err instanceof Error ? err.message : "Failed to connect to 0G daemon");
+      setApiError(
+        err instanceof Error ? err.message : "Failed to connect to 0G daemon"
+      );
     } finally {
       setLoading(false);
     }
@@ -474,18 +881,23 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const refreshAgyData = useCallback(async () => {
     setAgyError(null);
-    const [projRes, convRes, custRes] = await Promise.allSettled([
+    const [projRes, convRes, custRes, portsRes] = await Promise.allSettled([
       api.getAgyProjects(),
       api.getAgyConversations({ includeSubagents: false, limit: 60 }),
       api.getAgyCustomizations(),
+      api.getAgyPorts(),
     ]);
     if (projRes.status === "fulfilled") {
       setAgyProjects(projRes.value);
+      setSelectedProjectPathState(
+        (prev) => prev || projRes.value[0]?.path || null
+      );
       setTerminalCwd((prev) => prev || projRes.value[0]?.path || null);
     }
     if (convRes.status === "fulfilled") {
       setAgyConversations(convRes.value);
-      setActiveConversationId((prev) => {
+      setActiveConversationIdRaw((prev) => {
+        if (isNewChatDraftRef.current) return null;
         if (prev && convRes.value.some((c) => c.id === prev)) return prev;
         return convRes.value[0]?.id || prev || null;
       });
@@ -499,24 +911,47 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     if (custRes.status === "fulfilled") {
       setCustomizations(custRes.value);
     }
-  }, []);
-
-  const loadAgyConversationDetail = useCallback(async (conversationId: string) => {
-    if (!conversationId) return;
-    try {
-      const detail = await api.getAgyConversationDetail(conversationId, 150);
-      setActiveConversationDetail(detail);
-      setAgyError(null);
-    } catch (err) {
-      setAgyError(
-        err instanceof Error ? err.message : "Failed to load conversation transcript"
-      );
+    if (portsRes.status === "fulfilled") {
+      setDevPorts(portsRes.value);
+      setSelectedPreviewPort((prev) => prev || portsRes.value[0]?.port || null);
     }
   }, []);
+
+  const refreshSwarmDetail = useCallback(async (conversationId: string) => {
+    if (!conversationId) return;
+    try {
+      const sw = await api.getAgySwarmDetail(conversationId);
+      setSwarmDetail(sw);
+    } catch {
+      // Optional endpoint; activeConversationDetail also carries subagents & swarmPlan
+    }
+  }, []);
+
+  const loadAgyConversationDetail = useCallback(
+    async (conversationId: string) => {
+      if (!conversationId) return;
+      try {
+        const detail = await api.getAgyConversationDetail(conversationId, 150);
+        setActiveConversationDetail(detail);
+        setAgyError(null);
+        if (detail.conversation?.hasSwarm || detail.subagents?.length > 0) {
+          void refreshSwarmDetail(conversationId);
+        }
+      } catch (err) {
+        setAgyError(
+          err instanceof Error
+            ? err.message
+            : "Failed to load conversation transcript"
+        );
+      }
+    },
+    [refreshSwarmDetail]
+  );
 
   useEffect(() => {
     if (!activeConversationId) {
       setActiveConversationDetail(null);
+      setSwarmDetail(null);
       return;
     }
     let cancelled = false;
@@ -527,12 +962,17 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         if (!cancelled) {
           setActiveConversationDetail(detail);
           setAgyError(null);
+          if (detail.conversation?.hasSwarm || detail.subagents?.length > 0) {
+            void refreshSwarmDetail(activeConversationId);
+          }
         }
       })
       .catch((err) => {
         if (!cancelled) {
           setAgyError(
-            err instanceof Error ? err.message : "Failed to load conversation transcript"
+            err instanceof Error
+              ? err.message
+              : "Failed to load conversation transcript"
           );
         }
       })
@@ -542,7 +982,7 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     return () => {
       cancelled = true;
     };
-  }, [activeConversationId]);
+  }, [activeConversationId, refreshSwarmDetail]);
 
   const activeConvStatusFromList = useMemo(() => {
     if (!activeConversationId) return undefined;
@@ -581,19 +1021,101 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     loadAgyConversationDetail,
   ]);
 
+  const upsertProjectConfig = useCallback(
+    async (req: AgyProjectConfigUpsertRequest) => {
+      const res = await api.upsertAgyProjectConfig(req);
+      const updatedProjects = await api.getAgyProjects();
+      setAgyProjects(updatedProjects);
+      if (res.project?.path) {
+        setSelectedProjectPathState(res.project.path);
+      } else if (req.folders[0]) {
+        setSelectedProjectPathState(req.folders[0]);
+      }
+    },
+    []
+  );
+
+  const deleteProjectConfig = useCallback(async (projectId: string) => {
+    await api.deleteAgyProjectConfig(projectId);
+    const updatedProjects = await api.getAgyProjects();
+    setAgyProjects(updatedProjects);
+    setSelectedProjectPathState((prev) => prev || updatedProjects[0]?.path || null);
+  }, []);
+
+  const uploadAttachment = useCallback(
+    async (file: File): Promise<AgyUploadFileItem> => {
+      const targetProjPath =
+        activeConversationDetail?.conversation.workspacePaths?.[0] ||
+        selectedProject?.path ||
+        selectedProjectPath ||
+        agyProjects[0]?.path ||
+        projects[0]?.path ||
+        "";
+      if (!targetProjPath) {
+        throw new Error("Select a workspace project first before uploading files.");
+      }
+      setUploadingAttachment(true);
+      try {
+        const dataBase64 = await fileToBase64(file);
+        const res = await api.uploadWorkspaceFile({
+          projectPath: targetProjPath,
+          filename: file.name,
+          dataBase64,
+        });
+        const item: AgyUploadFileItem = {
+          fileName: res.fileName,
+          relPath: res.relPath,
+          absPath: res.absPath,
+          sizeBytes: res.sizeBytes,
+          mentionToken: res.mentionToken,
+        };
+        setUploadedAttachments((prev) => [
+          ...prev.filter((x) => x.relPath !== item.relPath),
+          item,
+        ]);
+        return item;
+      } finally {
+        setUploadingAttachment(false);
+      }
+    },
+    [
+      activeConversationDetail?.conversation.workspacePaths,
+      selectedProject?.path,
+      selectedProjectPath,
+      agyProjects,
+      projects,
+    ]
+  );
+
+  const removeUploadedAttachment = useCallback((relPath: string) => {
+    setUploadedAttachments((prev) => prev.filter((x) => x.relPath !== relPath));
+  }, []);
+
+  const clearUploadedAttachments = useCallback(() => {
+    setUploadedAttachments([]);
+  }, []);
+
   const startNewAgyConversation = useCallback(
     async (req: AgyCreateConversationRequest) => {
       const res = await api.createAgyConversation(req);
+      setIsNewChatDraft(false);
+      isNewChatDraftRef.current = false;
       boostPollUntilRef.current = Date.now() + 30000;
       setPollBoostTick((t) => t + 1);
       if (res.conversationId) {
-        setActiveConversationId(res.conversationId);
+        setActiveConversationIdRaw(res.conversationId);
         void loadAgyConversationDetail(res.conversationId);
+        if (voiceClient.getSnapshot().active) {
+          voiceClient.bindConversation(res.conversationId);
+        }
       }
       void api
         .getAgyConversations({ includeSubagents: false, limit: 60 })
         .then(setAgyConversations)
         .catch(() => {});
+      if (req.worktreeMode === "worktree") {
+        void api.getAgyProjects().then(setAgyProjects).catch(() => {});
+      }
       return res;
     },
     [loadAgyConversationDetail]
@@ -614,6 +1136,19 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     [loadAgyConversationDetail]
   );
 
+  const nudgeConversation = useCallback(
+    async (conversationId: string, message: string) => {
+      await api.nudgeAgyConversation(conversationId, message);
+      boostPollUntilRef.current = Date.now() + 30000;
+      setPollBoostTick((t) => t + 1);
+      if (activeConversationId) {
+        void loadAgyConversationDetail(activeConversationId);
+        void refreshSwarmDetail(activeConversationId);
+      }
+    },
+    [activeConversationId, loadAgyConversationDetail, refreshSwarmDetail]
+  );
+
   const loadSessionTimeline = useCallback(async (sessionId: string) => {
     try {
       const { steps, artifacts } = await api.getTimeline(sessionId);
@@ -622,7 +1157,7 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         setArtifactsBySession((prev) => ({ ...prev, [sessionId]: artifacts }));
       }
     } catch {
-      // Handled gracefully in timeline view
+      // Handled gracefully
     }
   }, []);
 
@@ -631,6 +1166,55 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       void loadSessionTimeline(selectedSessionId);
     }
   }, [selectedSessionId, loadSessionTimeline]);
+
+  // Voice Client subscription
+  useEffect(() => {
+    const unsubState = voiceClient.subscribe((snap) => {
+      setVoiceSnapshot(snap);
+    });
+    const unsubBound = voiceClient.onConversationBound((cid) => {
+      setIsNewChatDraft(false);
+      isNewChatDraftRef.current = false;
+      setActiveConversationIdRaw(cid);
+      boostPollUntilRef.current = Date.now() + 30000;
+      setPollBoostTick((t) => t + 1);
+      void loadAgyConversationDetail(cid);
+      void api
+        .getAgyConversations({ includeSubagents: false, limit: 60 })
+        .then(setAgyConversations)
+        .catch(() => {});
+    });
+    return () => {
+      unsubState();
+      unsubBound();
+      voiceClient.stop();
+    };
+  }, [loadAgyConversationDetail]);
+
+  const startVoiceCall = useCallback(async () => {
+    setVoiceMinimized(false);
+    await voiceClient.start(activeConversationId);
+  }, [activeConversationId]);
+
+  const endVoiceCall = useCallback(() => {
+    voiceClient.stop();
+    setVoiceMinimized(false);
+  }, []);
+
+  const toggleVoiceMic = useCallback(() => {
+    voiceClient.setMicMuted(!voiceClient.getSnapshot().micMuted);
+  }, []);
+
+  const toggleVoiceSpeaker = useCallback(() => {
+    voiceClient.setSpeakerMuted(!voiceClient.getSnapshot().speakerMuted);
+  }, []);
+
+  const cycleVoiceSpeed = useCallback(() => {
+    const cur = voiceClient.getSnapshot().playbackSpeed;
+    const next: VoicePlaybackSpeed =
+      cur === 1 ? 1.25 : cur === 1.25 ? 1.5 : 1;
+    voiceClient.setPlaybackSpeed(next);
+  }, []);
 
   // Handle incoming WS StreamEnvelope events
   const handleWsFrame = useCallback(
@@ -641,7 +1225,9 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         case "session_created":
         case "session.updated":
         case "session_updated": {
-          const s = (p.session as SessionSummary | undefined) || (p as unknown as SessionSummary);
+          const s =
+            (p.session as SessionSummary | undefined) ||
+            (p as unknown as SessionSummary);
           if (s && s.id) {
             setSessions((prev) => {
               const idx = prev.findIndex((x) => x.id === s.id);
@@ -657,7 +1243,9 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         }
         case "timeline.step":
         case "timeline_step": {
-          const step = (p.step as TimelineStep | undefined) || (p as unknown as TimelineStep);
+          const step =
+            (p.step as TimelineStep | undefined) ||
+            (p as unknown as TimelineStep);
           const sid = step?.sessionId || env.sessionId;
           if (sid && step && step.id) {
             setTimelinesBySession((prev) => {
@@ -671,15 +1259,24 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         case "timeline.token":
         case "timeline_token": {
           const sid = env.sessionId || (p.sessionId as string | undefined);
-          const chunk = typeof p.text === "string" ? p.text : typeof p.token === "string" ? p.token : "";
-          const stepId = typeof p.stepId === "string" ? p.stepId : `stream_${sid}`;
+          const chunk =
+            typeof p.text === "string"
+              ? p.text
+              : typeof p.token === "string"
+                ? p.token
+                : "";
+          const stepId =
+            typeof p.stepId === "string" ? p.stepId : `stream_${sid}`;
           if (sid && chunk) {
             setTimelinesBySession((prev) => {
               const existing = prev[sid] || [];
               const idx = existing.findIndex((x) => x.id === stepId);
               if (idx >= 0) {
                 const copy = [...existing];
-                copy[idx] = { ...copy[idx], content: copy[idx].content + chunk };
+                copy[idx] = {
+                  ...copy[idx],
+                  content: copy[idx].content + chunk,
+                };
                 return { ...prev, [sid]: copy };
               }
               const nextStep: TimelineStep = {
@@ -701,7 +1298,9 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         case "approval.resolved":
         case "approval.escalated":
         case "approval_updated": {
-          const item = (p.approval as ApprovalItem | undefined) || (p as unknown as ApprovalItem);
+          const item =
+            (p.approval as ApprovalItem | undefined) ||
+            (p as unknown as ApprovalItem);
           if (item && item.id) {
             setApprovals((prev) => {
               const idx = prev.findIndex((a) => a.id === item.id);
@@ -717,7 +1316,9 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         }
         case "host.glance":
         case "host_glance": {
-          const glance = (p.glance as HostGlanceSnapshot | undefined) || (p as unknown as HostGlanceSnapshot);
+          const glance =
+            (p.glance as HostGlanceSnapshot | undefined) ||
+            (p as unknown as HostGlanceSnapshot);
           if (glance && typeof glance.cpuPercent === "number") {
             setHostGlance(glance);
           }
@@ -725,12 +1326,16 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         }
         case "host.locked":
         case "panic_locked": {
-          setHostGlance((prev) => (prev ? { ...prev, hostLocked: true } : prev));
+          setHostGlance((prev) =>
+            prev ? { ...prev, hostLocked: true } : prev
+          );
           break;
         }
         case "host.unlocked":
         case "panic_unlocked": {
-          setHostGlance((prev) => (prev ? { ...prev, hostLocked: false } : prev));
+          setHostGlance((prev) =>
+            prev ? { ...prev, hostLocked: false } : prev
+          );
           break;
         }
         case "power.gear":
@@ -739,7 +1344,9 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
             prev
               ? {
                   ...prev,
-                  powerGear: (p.powerGear as HostGlanceSnapshot["powerGear"]) || prev.powerGear,
+                  powerGear:
+                    (p.powerGear as HostGlanceSnapshot["powerGear"]) ||
+                    prev.powerGear,
                   autoGovernorEnabled:
                     typeof p.autoGovernorEnabled === "boolean"
                       ? p.autoGovernorEnabled
@@ -758,6 +1365,13 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
           }
           break;
         }
+        case "agy.settings_updated": {
+          const nextPreset = p.permissionPreset as PermissionPreset | undefined;
+          const nextLayout = p.interfaceLayout as InterfaceLayout | undefined;
+          if (nextPreset) setPermissionPresetState(nextPreset);
+          if (nextLayout) setInterfaceLayoutState(nextLayout);
+          break;
+        }
         case "rule.updated":
         case "rule_updated": {
           void api.getRules().then(setRules).catch(() => {});
@@ -770,7 +1384,9 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         }
         case "tunnel.updated":
         case "tunnel_updated": {
-          const st = (p.tunnel as TunnelStatus | undefined) || (p as unknown as TunnelStatus);
+          const st =
+            (p.tunnel as TunnelStatus | undefined) ||
+            (p as unknown as TunnelStatus);
           if (st && st.status) {
             setTunnelStatus(st);
           }
@@ -778,7 +1394,9 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         }
         case "pty.output":
         case "pty_output": {
-          const sid = String(p.ptySessionId || p.sessionId || env.sessionId || "");
+          const sid = String(
+            p.ptySessionId || p.sessionId || env.sessionId || ""
+          );
           const chunk = String(p.data || p.output || "");
           if (sid && chunk) {
             setPtyOutputBySession((prev) => {
@@ -790,7 +1408,11 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
         }
         case "mobile_tool_request": {
           const req = p as unknown as MobileToolRequestFrame;
-          if (req && req.ticketId && !handledTicketsRef.current.has(req.ticketId)) {
+          if (
+            req &&
+            req.ticketId &&
+            !handledTicketsRef.current.has(req.ticketId)
+          ) {
             handledTicketsRef.current.add(req.ticketId);
             const matched = mobileToolsRef.current.find(
               (t) => t.name === req.toolName
@@ -828,7 +1450,10 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       const { pendingPairCode } = consumeUrlPairingParams();
       if (pendingPairCode) {
         try {
-          const res = await api.claimPairingCode(pendingPairCode, "0G Mobile PWA");
+          const res = await api.claimPairingCode(
+            pendingPairCode,
+            "0G Mobile PWA"
+          );
           const sessionTok = res.token || res.sessionToken;
           if (sessionTok) {
             setAuthToken(sessionTok);
@@ -854,6 +1479,7 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
           .getAgyConversations({ includeSubagents: false, limit: 60 })
           .then(setAgyConversations)
           .catch(() => {});
+        void api.getAgyPorts().then(setDevPorts).catch(() => {});
       }
     }, 10000);
 
@@ -937,7 +1563,10 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const spawnWorker = useCallback(async (req: WorktreeTaskRequest) => {
     const created = await api.spawnSession(req);
-    setSessions((prev) => [created, ...prev.filter((s) => s.id !== created.id)]);
+    setSessions((prev) => [
+      created,
+      ...prev.filter((s) => s.id !== created.id),
+    ]);
     setSelectedSessionId(created.id);
     return created;
   }, []);
@@ -978,10 +1607,14 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   const saveMobileTool = useCallback(
-    async (tool: MobileToolCreateRequest & { id?: string; enabled?: boolean }) => {
+    async (
+      tool: MobileToolCreateRequest & { id?: string; enabled?: boolean }
+    ) => {
       const saved = await api.saveMobileTool(tool);
       setMobileTools((prev) => {
-        const idx = prev.findIndex((t) => t.id === saved.id || t.name === saved.name);
+        const idx = prev.findIndex(
+          (t) => t.id === saved.id || t.name === saved.name
+        );
         if (idx >= 0) {
           const copy = [...prev];
           copy[idx] = saved;
@@ -1004,8 +1637,8 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       await api.runAutomation(slug);
       pushNotifyCard({
         id: `auto_${Date.now()}`,
-        title: "Automation Triggered",
-        body: `Scheduled job "${slug}" dispatched to host.`,
+        title: "Scheduled Task Triggered",
+        body: `Task "${slug}" dispatched to Antigravity host.`,
         severity: "success",
         ts: Date.now(),
       });
@@ -1019,7 +1652,7 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       const res = await api.runMacro(id);
       pushNotifyCard({
         id: `macro_${Date.now()}`,
-        title: "Laptop Macro Executed",
+        title: "Host Macro Executed",
         body: res.output ? res.output.slice(0, 140) : `Macro ${id} completed.`,
         severity: "info",
         ts: Date.now(),
@@ -1039,6 +1672,7 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
     setHostGlance((prev) =>
       prev ? { ...prev, agentGateMode: applied } : prev
     );
+    setPermissionPresetState(applied === "agent_turbo" ? "turbo" : "request_review");
   }, []);
 
   const panicLock = useCallback(async (lockWorkstation = false) => {
@@ -1069,10 +1703,16 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const createPty = useCallback(async (cwd?: string) => {
     const created = await api.createPtySession(cwd);
-    setPtySessions((prev) => [created, ...prev.filter((p) => p.id !== created.id)]);
+    setPtySessions((prev) => [
+      created,
+      ...prev.filter((p) => p.id !== created.id),
+    ]);
     setActivePtyId(created.id);
     if (created.buffer) {
-      setPtyOutputBySession((prev) => ({ ...prev, [created.id]: created.buffer || "" }));
+      setPtyOutputBySession((prev) => ({
+        ...prev,
+        [created.id]: created.buffer || "",
+      }));
     }
   }, []);
 
@@ -1082,12 +1722,31 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const value = useMemo<ZeroGStoreValue>(
     () => ({
-      agentGateMode: hostGlance?.agentGateMode || "ask_on_phone",
       theme,
       setTheme,
       isAuxPane,
-      activeTab,
-      setActiveTab,
+      leftSidebarOpen,
+      setLeftSidebarOpen,
+      toggleLeftSidebar,
+      rightAuxOpen,
+      setRightAuxOpen,
+      toggleRightAux,
+      rightAuxTab,
+      setRightAuxTab,
+      openRightAuxTab,
+      focusedArtifactPath,
+      setFocusedArtifactPath,
+      settingsModalOpen,
+      settingsSection,
+      openSettingsModal,
+      closeSettingsModal,
+      interfaceLayout,
+      setInterfaceLayout,
+      permissionPreset,
+      setPermissionPreset,
+      autostartStatus,
+      updateAutostart,
+      voiceCapabilities,
       wsStatus,
       lastSeq,
       loading,
@@ -1125,6 +1784,7 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       macros,
       runMacro,
       hostGlance,
+      agentGateMode: hostGlance?.agentGateMode || "ask_on_phone",
       setAgentGateMode,
       updatePowerGear,
       panicLock,
@@ -1148,32 +1808,79 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       pushNotifyCard,
       openPromptModal,
       agyProjects,
+      selectedProjectPath,
+      setSelectedProjectPath,
+      selectedProject,
+      upsertProjectConfig,
+      deleteProjectConfig,
       agyConversations,
       activeConversationId,
       setActiveConversationId,
+      isNewChatDraft,
+      startFreshNewConversationView,
       activeConversationDetail,
+      swarmDetail,
+      refreshSwarmDetail,
+      nudgeConversation,
       agyConversationLoading,
       agyError,
-      selectedProjectPath,
-      setSelectedProjectPath,
       customizations,
       composerDraft,
       setComposerDraft,
-      pendingNewChatOpen,
-      setPendingNewChatOpen,
+      selectedModel,
+      setSelectedModel,
+      worktreeMode,
+      setWorktreeMode,
+      worktreeBranch,
+      setWorktreeBranch,
+      uploadedAttachments,
+      uploadingAttachment,
+      uploadAttachment,
+      removeUploadedAttachment,
+      clearUploadedAttachments,
+      devPorts,
+      refreshDevPorts,
+      selectedPreviewPort,
+      setSelectedPreviewPort,
       terminalCwd,
       setTerminalCwd,
       refreshAgyData,
       loadAgyConversationDetail,
       startNewAgyConversation,
       sendAgyChatMessage,
+      voiceSnapshot,
+      voiceMinimized,
+      setVoiceMinimized,
+      startVoiceCall,
+      endVoiceCall,
+      toggleVoiceMic,
+      toggleVoiceSpeaker,
+      cycleVoiceSpeed,
     }),
     [
       theme,
       setTheme,
       isAuxPane,
-      activeTab,
-      setActiveTab,
+      leftSidebarOpen,
+      toggleLeftSidebar,
+      rightAuxOpen,
+      setRightAuxOpen,
+      toggleRightAux,
+      rightAuxTab,
+      setRightAuxTab,
+      openRightAuxTab,
+      focusedArtifactPath,
+      settingsModalOpen,
+      settingsSection,
+      openSettingsModal,
+      closeSettingsModal,
+      interfaceLayout,
+      setInterfaceLayout,
+      permissionPreset,
+      setPermissionPreset,
+      autostartStatus,
+      updateAutostart,
+      voiceCapabilities,
       wsStatus,
       lastSeq,
       loading,
@@ -1230,20 +1937,47 @@ export const ZeroGStoreProvider: React.FC<{ children: React.ReactNode }> = ({
       pushNotifyCard,
       openPromptModal,
       agyProjects,
+      selectedProjectPath,
+      setSelectedProjectPath,
+      selectedProject,
+      upsertProjectConfig,
+      deleteProjectConfig,
       agyConversations,
       activeConversationId,
+      setActiveConversationId,
+      isNewChatDraft,
+      startFreshNewConversationView,
       activeConversationDetail,
+      swarmDetail,
+      refreshSwarmDetail,
+      nudgeConversation,
       agyConversationLoading,
       agyError,
-      selectedProjectPath,
       customizations,
       composerDraft,
-      pendingNewChatOpen,
+      selectedModel,
+      worktreeMode,
+      worktreeBranch,
+      uploadedAttachments,
+      uploadingAttachment,
+      uploadAttachment,
+      removeUploadedAttachment,
+      clearUploadedAttachments,
+      devPorts,
+      refreshDevPorts,
+      selectedPreviewPort,
       terminalCwd,
       refreshAgyData,
       loadAgyConversationDetail,
       startNewAgyConversation,
       sendAgyChatMessage,
+      voiceSnapshot,
+      voiceMinimized,
+      startVoiceCall,
+      endVoiceCall,
+      toggleVoiceMic,
+      toggleVoiceSpeaker,
+      cycleVoiceSpeed,
     ]
   );
 

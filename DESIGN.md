@@ -1,56 +1,60 @@
 # Zero-G (0G) — Design Handoff & Layout Specification (DESIGN.md)
 
-> **Product Identity:** `0G` (digit `0` + capital `G` — zero-weight mobile remote & host control for Antigravity, Claude Code, OpenAI Codex CLI, and xAI Grok Build)
-> **Surface Mode:** `Operate` (mobile-first PWA + Desktop Aux Pane) | `Persuade` (open-source landing & pairing cards)
-> **Target Breakpoints:** `390px` mobile viewport (primary, zero horizontal overflow), `768px` tablet, `320px–420px` Antigravity Desktop Aux Pane (`?view=auxpane`), `1440px` desktop
+> **Product Identity:** `0G` (digit `0` + capital `G` — 1:1 Native Antigravity Remote Control & Host Power Governor)
+> **Surface Mode:** `Operate` (mobile-first PWA & Desktop Aux Pane) | `Persuade` (pairing & status cards)
+> **Target Breakpoints:** `390px` mobile viewport (primary canvas, zero horizontal overflow), `768px` tablet, `320px–420px` Antigravity Desktop Aux Pane (`?view=auxpane`), `1440px` desktop workstation
 
 ---
 
 ## 1. Purpose for the Design Team
 
-This codebase separates **100% of visual skinning** from runtime state and host functionality. All layouts are built as semantic, unstyled-dependency-free skeletons bound exclusively to CSS custom properties in `web/src/styles/theme.css` and `tokens.dtcg.json`.
+This codebase separates 100% of visual skinning from runtime state, WebSocket streaming, and Python host execution. All layouts are semantic, dependency-free skeletons bound strictly to CSS custom properties in `web/src/styles/theme.css` and `tokens.dtcg.json`.
 
-**The color palette, visual direction, brand identity, iconography, and typography are 100% open to the designer.** The UI is unconstrained by any predefined aesthetic or color system. Your design team can invent the visual palette from scratch, restyle fonts, icons, card radii, and project avatars **without touching backend Python or React state logic** simply by populating the semantic CSS variables.
+The visual direction, typography, corner radii, spacing scales, elevations, and branding are 100% open to the designer. The interface is unconstrained by any predefined aesthetic. Your design team can construct custom visual themes from scratch without modifying backend Python or React application logic simply by assigning values to the semantic CSS variables.
 
 ### Built-in Structural Theme Presets (`[data-theme="..."]`)
-Existing theme entries in `web/src/styles/theme.css` are temporary structural placeholders demonstrating semantic variable wiring across environments:
-1. **`obsidian` (Default structural preset):** Baseline dark structural preset for OLED/night testing.
-2. **`outdoor` (Daylight outdoor preset):** Inverted high-contrast structural preset for outdoor mobile testing.
-3. **`wireframe` (Studio wireframe preset):** Neutral blueprint grid with structural hairlines for designer annotation and reskinning.
+Existing theme entries in `web/src/styles/theme.css` serve as structural references demonstrating variable wiring across environments:
+1. **`obsidian` (Baseline structural preset):** Default baseline structural preset for low-ambient and night-mode testing.
+2. **`outdoor` (Daylight high-contrast preset):** Inverted structural preset optimized for high-glare mobile environments.
+3. **`wireframe` (Studio wireframe preset):** Neutral structural grid with baseline hairlines for designer annotation and reskinning.
 
 ### Explicit Functional Constraints
-- Never put raw color values or hex literals in `.tsx` components — consume semantic variables (`var(--bg-canvas)`, `var(--bg-surface)`, `var(--text-primary)`, `var(--text-muted)`, `var(--accent-primary)`, `var(--accent-secondary)`, `var(--border-default)`, and semantic status tokens).
-- Never drop `:focus-visible` outlines, never nest cards inside cards needlessly, never shrink touch targets below `44x44px` on mobile, and never use `transition: all` (animate `transform` and `opacity` only, honoring `prefers-reduced-motion`).
+- Consume semantic variables exclusively (`var(--bg-canvas)`, `var(--bg-surface)`, `var(--text-primary)`, `var(--text-muted)`, `var(--accent-primary)`, `var(--accent-secondary)`, `var(--border-default)`, and semantic status tokens).
+- Never drop `:focus-visible` outlines.
+- Never nest cards inside cards needlessly.
+- Never shrink interactive touch targets below `44x44px` on mobile viewports.
+- Never use `transition: all` (animate `transform` and `opacity` only, honoring `prefers-reduced-motion`).
+- **Zero Bottom Navigation Tabs:** Antigravity operates as a unified single-canvas application (Top Bar, Left Sidebar Drawer, Center Chat Canvas, Slide-out Right Auxiliary Pane).
 
 ---
 
 ## 2. Semantic CSS Variable Slots (Palette Defined by Designer)
 
-Consume via `tokens.dtcg.json` or `web/src/styles/theme.css`. The designer defines all palette values according to these semantic roles and accessibility criteria:
+Consume via `tokens.dtcg.json` or `web/src/styles/theme.css`. The designer defines all values according to these semantic roles and accessibility criteria:
 
 | Semantic Role | CSS Custom Property | UI Role / Where Used | Accessibility Requirement |
 | :--- | :--- | :--- | :--- |
 | **Canvas Background** | `--bg-canvas` / `--background` | Primary viewport backdrop across full screen | Foundation layer |
-| **Elevated Surface** | `--bg-surface` / `--surface` | Cards, bottom bar, navigation drawers, Aux Pane cards | Base card layer |
-| **Subtle / Nested Well** | `--bg-subtle` | Code blocks, terminal wells, nested table rows | Subtle structural differentiation |
-| **Raised Surface** | `--bg-elevated` | Active tab pills, hover highlights, modal sheets | Elevated contrast layer |
-| **Primary Text** | `--text-primary` / `--foreground` | Headings, primary labels, main body copy | `>= 4.5:1` contrast on surface and canvas |
-| **Muted / Secondary Text** | `--text-muted` / `--muted-foreground` | Metadata, timestamps, captions, secondary labels | `>= 4.5:1` contrast for readable body text |
-| **Primary Action** | `--accent-primary` / `--primary` | Primary CTA button fill, active switches, active selection | `>= 3:1` interactive UI contrast |
+| **Elevated Surface** | `--bg-surface` / `--surface` | Cards, drawers, top bar, message box, Aux Pane | Base card layer |
+| **Subtle Well** | `--bg-subtle` | Code blocks, terminal wells, nested table rows | Subtle structural differentiation |
+| **Raised Surface** | `--bg-elevated` | Active pills, hover highlights, modal sheets, voice bar | Elevated contrast layer |
+| **Primary Text** | `--text-primary` / `--foreground` | Headings, primary labels, main message content | `>= 4.5:1` contrast on surface and canvas |
+| **Muted Text** | `--text-muted` / `--muted-foreground` | Secondary labels, metadata, timestamps, captions | `>= 4.5:1` contrast for readable body text |
+| **Primary Action** | `--accent-primary` / `--primary` | Primary CTA button fill, active switches, selection | `>= 3:1` interactive UI contrast |
 | **Primary Foreground** | `--accent-primary-fg` / `--primary-foreground` | Text and icons rendered inside primary CTA buttons | `>= 4.5:1` contrast against `--accent-primary` |
 | **Secondary Accent** | `--accent-secondary` / `--accent` | Live sync pulse, active links, data badges | `>= 3:1` interactive UI contrast |
-| **Border / Hairline** | `--border-default` / `--border` | Structural card borders and control dividers (1px) | `>= 3:1` boundary contrast per WCAG 2.2 AA |
-| **Strong Border / Style** | `--border-strong`, `--border-style` | Active focus frames and emphasized dividers | High-visibility focus indicator |
-| **Status: Info** | `--status-info`, `-bg`, `-fg` | Informational callouts, Tier-1 workspace badges | `>= 4.5:1` text / `>= 3:1` UI contrast |
-| **Status: Warning / Hold** | `--status-warning`, `-bg`, `-fg` | Hold countdown timer, Tier-2 review alerts, battery guard | `>= 4.5:1` text / `>= 3:1` UI contrast |
-| **Status: Danger / PANIC** | `--status-danger`, `-bg`, `-fg`, `-contrast` | `HOST_LOCKED` banner, Tier-3 blocks, PANIC button | `>= 4.5:1` text / `>= 3:1` UI contrast |
+| **Border Hairline** | `--border-default` / `--border` | Structural card borders and control dividers (1px) | `>= 3:1` boundary contrast per WCAG 2.2 AA |
+| **Strong Border** | `--border-strong`, `--border-style` | Active focus frames and emphasized dividers | High-visibility focus indicator |
+| **Status: Info** | `--status-info`, `-bg`, `-fg` | Informational callouts, workspace badges | `>= 4.5:1` text / `>= 3:1` UI contrast |
+| **Status: Warning** | `--status-warning`, `-bg`, `-fg` | Hold countdown timer, review alerts, battery guard | `>= 4.5:1` text / `>= 3:1` UI contrast |
+| **Status: Danger** | `--status-danger`, `-bg`, `-fg`, `-contrast` | `HOST_LOCKED` banner, tier 3 blocks, PANIC button | `>= 4.5:1` text / `>= 3:1` UI contrast |
 | **Status: Success** | `--status-success`, `-bg`, `-fg` | Passed checks, clean worktree, synced indicators | `>= 4.5:1` text / `>= 3:1` UI contrast |
-| **Git Diff Highlights** | `--diff-add-bg`/`-fg`, `--diff-del-bg`/`-fg` | Added and deleted unified diff lines in drawer | `>= 4.5:1` text contrast for diff inspection |
+| **Diff Highlights** | `--diff-add-bg`/`-fg`, `--diff-del-bg`/`-fg` | Added and deleted unified diff lines in drawer | `>= 4.5:1` text contrast for diff inspection |
 
 ### Provider Badge Token Slots (Defined by Designer)
 | Provider ID | CSS Token | UI Role / Where Used | Accessibility Requirement |
 | :--- | :--- | :--- | :--- |
-| `antigravity` | `--provider-antigravity` | Priority #1 orbital mark (`0G` native) | `>= 3:1` graphical element contrast |
+| `antigravity` | `--provider-antigravity` | Priority 1 orbital mark (0G native integration) | `>= 3:1` graphical element contrast |
 | `claude_code` | `--provider-claude` | Anthropic Claude Code adapter mark | `>= 3:1` graphical element contrast |
 | `codex_cli` | `--provider-codex` | OpenAI Codex CLI adapter mark | `>= 3:1` graphical element contrast |
 | `grok_build` | `--provider-grok` | xAI Grok Build adapter mark | `>= 3:1` graphical element contrast |
@@ -62,85 +66,171 @@ Consume via `tokens.dtcg.json` or `web/src/styles/theme.css`. The designer defin
 Font selection is completely open to the designer. Configure font families via these token slots:
 - **Display Typeface Slot:** `--font-display` (headings, hero titles, modal headers)
 - **Body Typeface Slot:** `--font-body` (labels, body copy, descriptions, navigation items)
-- **Monospace / Data Typeface Slot:** `--font-mono` (code blocks, terminal output, telemetry, hash chains)
+- **Monospace Typeface Slot:** `--font-mono` (code blocks, terminal output, telemetry, hash chains)
 
 ### Functional Mobile Typography Rules
 - **Minimum Mobile Font Size:** `>= 12px` (`0.75rem`) for micro-badges and timestamps.
 - **Input Field Sizing:** `14px–16px` for text inputs and textareas to prevent iOS browser auto-zoom on focus.
-- **Tabular Discipline:** Enforce `font-variant-numeric: tabular-nums` on WebSocket `seq`, countdown timers (`25.0s`), battery %, CPU/VRAM telemetry, and token budgets to prevent horizontal jitter during live streaming.
+- **Tabular Discipline:** Enforce `font-variant-numeric: tabular-nums` on WebSocket sequence numbers, countdown timers (`25.0s`), battery percentages, CPU/VRAM telemetry, port numbers, and token budgets to prevent horizontal jitter during live streaming.
 
 ---
 
 ## 4. Information Architecture & Wireframe Skeleton
 
-### A. Mobile PWA Shell (`390px` Primary)
+Zero-G implements a **1:1 Native Antigravity Remote Control** architecture. It operates as a unified single-canvas application with **ZERO bottom navigation tabs**. Navigation, workspace switching, multi-folder project configuration, tool supervision, and auxiliary companion views are organized across four structural regions:
+
 ```text
 ┌──────────────────────────────────────────────────────────┐
-│ [0G]  ● WS #seq   ⚡ Ask on Phone   🔋 82% [SIP]  🎨 [PANIC]│  <- Persistent Top Bar (min-h 52px)
-├──────────────────────────────────────────────────────────┤
-│ ⚠️ Approval Required: rm -rf /tmp/build (18s)             │  <- Global Inline Permission Banner
-│    [Approve]       [Allow 30m]       [Deny]              │     (Surfaced across any active tab)
+│ [≡] Project Name · Chat Title    [SE] ⚡Auto 🔋82% 🎨 [■] [⊞]│  Top Bar (min-h 52px)
 ├──────────────────────────────────────────────────────────┤
 │                                                          │
-│   Active Tab Canvas (Scrollable, 16px outer gutter)      │
-│   1. Chat (Live Stream, Thinking, Tool Calls, Composer)  │
-│   2. Projects (Workspace IDE: Files, Changes, Chats)     │
-│   3. Terminal (CWD Selector, Presets, Command Runner)    │
-│   4. Laptop (Gate Mode, 5-Gear Governor, Skills, Tunnel) │
+│   CENTER CHAT CANVAS (Scrollable, full-bleed stream)     │
 │                                                          │
-├──────────────────────────────────────────────────────────┤
-│      [Chat]      [Projects]      [Terminal]    [Laptop]  │  <- Fixed 4-Tab Bottom Bar (>=44px tap targets)
+│   - Turn History (User & Assistant)                      │
+│   - Collapsible Thinking Blocks                          │
+│   - Expandable Tool Call Chips                           │
+│                                                          │
+│   - Inline Interactive Cards:                            │
+│     * Permission Confirmation Card (25s countdown)       │
+│     * Implementation Plan Review (Proceed / Feedback)    │
+│     * Clickable Multiple-Choice Question Card            │
+│                                                          │
+│   - Spoken Voice Call Bar (When Voice Mode Active):      │
+│     * Live Gemini 3.8 Live Bidirectional Audio Stream    │
+│     * Status: Listening / Speaking / Interrupted         │
+│     * Controls: Mute Mic, Mute Speaker, 1x/1.25x/1.5x    │
+│                                                          │
+│   - Native Message Box (Sticky Bottom Composer):         │
+│     [+] [Model: Auto ▼] [Preset: Auto ▼] [Local/Worktree]│
+│     [Type prompt... /commands @files            ] [Mic]  │
+│     [Start Voice Mode]                          [Send →] │
+│                                                          │
 └──────────────────────────────────────────────────────────┘
 ```
 
-### B. Antigravity Desktop Aux Pane (`?view=auxpane`, `320px–420px`)
-- Compact single-column stack without bottom nav:
-  1. **Tunnel & QR Pairing Card:** Live Cloudflare Tunnel (`*.trycloudflare.com` / named) + Tailscale Serve URL, 1-click Copy, and scannable SVG QR + 6-digit pairing code.
-  2. **Backpack Power Governor Card:** Live Battery %, AC/DC state, Gear pill (`Ultra-Sip` / `Auto-Turbo`), Keep-Awake status.
-  3. **Global Permission Status & Agent Gate Mode:** Active hold counter, quick Approve / Deny actions, and `Ask on Phone` vs `Agent Turbo` status.
-  4. **PANIC Host Lock Switch:** Instant hardware lock toggle (`HOST_LOCKED`).
+### Region 1: Persistent Top Bar
+Positioned at the top of the mobile viewport (`min-height: 52px`):
+1. **Drawer Toggle (`[≡]`):** Opens the Slide-out Left Sidebar Drawer.
+2. **Context Title:** Displays active Project Name and Conversation Title with truncation.
+3. **Interface Layout Pill:** Indicates active layout mode (`SE` for Software Engineering, `KW` for Knowledge Work).
+4. **Permission Preset Pill:** Displays active preset (`Review`, `Default`, `Auto`, `Turbo`).
+5. **Backpack Power Governor Pill:** Displays battery percentage and active hardware power gear (`Ultra-Sip`, `Auto-Turbo`, `Balanced`, `Max Turbo`, `Low-Batt Guard`).
+6. **Theme Switcher (`🎨`):** Cycles structural presets (`obsidian`, `outdoor`, `wireframe`).
+7. **PANIC Lock Button (`[■]`):** One-tap hardware emergency lock (`HOST_LOCKED`).
+8. **Aux Pane Toggle (`[⊞]`):** Opens the Slide-out Right Auxiliary Pane.
 
-### C. Implemented Sub-Views, Drawers & Interactive Overlays (Design Scope)
-1. **Global Inline Permission Banner (Header):**
-   Surfaces `Ask on Phone` approval prompts (`Approve`, `Allow 30m`, `Deny`) cleanly across any active tab whenever an agent execution is held in Mode A, alongside the persistent top bar featuring connection status, `Agent Gate Mode` toggle (`Ask on Phone` / `Agent Turbo`), battery/power gear pill, theme switcher (`obsidian`, `outdoor`, `wireframe`), and one-tap `PANIC` lock.
-2. **Tab 1 — `Chat` (`ChatTab`):**
-   Live Antigravity conversation stream read directly via `conversation_summaries.db` + `transcript.jsonl` + `agentapi.bat`. Features conversation switcher drawer with search and filter (`All`, `Project`, `Running`), `+ New Conversation` modal sheet (project directory picker, model selector: `Auto`, `Gemini 4 Carbon`, `Gemini 4 Hydrogen`, `Gemini 4 Argon`, `Gemini 3.8 Flash`, `Pro`, `Flash`), Subagents & Swarm drawer to inspect subagent roles, statuses, and child transcripts, clickable Artifacts chips opening a dedicated viewer sheet for Markdown, HTML, images, and code, expandable Thinking & Tool Call chips (`name`, summary, args/output preview), and a sticky bottom Antigravity Composer with `/` Slash Command Picker (`/plan`, `/grill-me`, `/boost`, `/teamwork`, `/goal`, `/browser`, `/compact`, `/schedule`, `/learn`), `@` File Mention Picker (file autocomplete from active project), and auto-growing prompt input.
-3. **Tab 2 — `Projects` (`ProjectsWorkspaceTab`):**
-   Real local workspace list (`C:\Users\...\F`, `scratch`, and configured project roots) showing name, path, Git branch badge, dirty file count, and conversation count. Tapping any workspace card transitions cleanly into a Desktop-style Project Workspace view with back navigation, quick `+ New Chat Here` action, `Open in Terminal` shortcut, and three dedicated sub-views:
-   - **Files & Code Viewer:** Breadcrumb directory tree browser (`GET /api/agy/files/list`) and line-numbered code/markdown reader (`GET /api/agy/files/read`) with direct **"Ask Agent about `@file`"** CTA that loads `@file` into the Chat composer and switches tabs.
-   - **Git Changes & Diffs:** Modified and untracked file status list (`git status`), expandable unified diff viewer (`git diff`), and 1-tap **Revert** file action.
-   - **Project Chats:** Filtered conversation history associated specifically with the selected project workspace.
-4. **Tab 3 — `Terminal` (`TerminalTab`):**
-   Working-directory selector dropdown populated from detected local workspaces, quick preset command chips (`git status`, `git log -5 --oneline`, `pytest`, `npm run build`), ANSI-stripped stdout/stderr execution history, and mobile-friendly command execution bar calling `POST /api/agy/terminal/exec`.
-5. **Tab 4 — `Laptop` (`LaptopTab`):**
-   Decoupled Agent Permission Mode (`Ask on Phone` vs `Agent Turbo`), separated 5-gear Backpack Power Governor (`Ultra-Sip`, `Auto-Turbo`, `Balanced`, `Max Turbo`, `Low Battery Guard` with display-off and battery threshold sliders), collapsible Antigravity Skills, Plugins & Rules inspector (`GET /api/agy/customizations`), Laptop Host Vitals (CPU, RAM, GPU, Disk, active development listening ports), auto-healing Cloudflare Tunnel + QR Pairing controls, and WebAuthn Passkey settings.
-6. **Global Overlays & Modals:**
-   `MobilePromptModal` (interactive phone dialog for `phone_ask_input` or `phone_capture_photo`), `PairingModal` (QR code and 6-digit pairing code dialog), and slide-over navigation drawers.
+### Region 2: Slide-out Left Sidebar Drawer
+Accessible via the top bar hamburger button or edge-swipe:
+1. **Multi-Folder Project Selector:**
+   - Real local workspaces and configured multi-folder projects.
+   - Per-project configuration: folder paths, per-project permission preset override, and default worktree mode (`Local` vs `New Worktree`).
+   - Project actions: Add folder root, refresh git status, inspect branch.
+2. **Conversation History:**
+   - Filterable conversation list grouped by project, recency, and active execution status.
+   - `+ New Conversation` action with project directory picker, model selector (`Auto`, `Gemini 4 Carbon`, `Gemini 4 Hydrogen`, `Gemini 4 Argon`, `Gemini 3.8 Flash`, `Pro`, `Flash`), and worktree branch options.
+3. **Settings Panel (General & Host Settings):**
+   - **Interface Layout Selector:** Toggle between `Software Engineering` and `Knowledge Work`.
+   - **Global Permission Preset:** Select global default (`Request Review`, `Default`, `Auto`, `Turbo`).
+   - **Windows Login Auto-Start:** Toggle host boot persistence.
+   - **Tunnel Delivery Configuration:** Configure automatic link dispatch via Web Push and Gmail CLI.
+   - **Authentication:** WebAuthn Passkey management.
+
+### Region 3: Center Chat Canvas
+The core interaction space for Antigravity sessions:
+1. **Conversation Stream:**
+   - Real-time turn rendering directly from local SQLite WAL (`conversation_summaries.db`) and `transcript.jsonl`.
+   - Collapsible thinking sections displaying model contemplation state.
+   - Expandable tool call chips detailing invocation arguments, execution duration, and output logs.
+2. **Inline Chat Interactive Cards:**
+   - **Permission Confirmation Card:** Surfaced inline whenever tool execution requires approval. Displays tabular countdown timer (`25.0s -> 0.0s`), AST risk tier badge (Tier 0–3), command preview, and action buttons (`Approve`, `Allow 30m`, `Deny`). If the timer elapses, transitions cleanly to an escalation badge indicating execution was preserved for host review.
+   - **Implementation Plan Review Card:** Rendered when an agent presents a multi-step execution plan. Displays phase breakdown, executable steps, `Proceed` button, and structured feedback input.
+   - **Clickable Multiple-Choice Question Card:** Displays structured decision options provided by the agent. Users select single or multiple choices with one tap and submit directly to the agent session.
+3. **Spoken Voice Mode & Call Bar:**
+   - Powered by `gemini-3.8-live` real-time bidirectional audio streaming over WebSocket (`16kHz` Int16 PCM input, `24kHz` Int16 PCM output).
+   - Floats above the composer when active, displaying audio status: `Connecting`, `Listening`, `Speaking`, or `Interrupted`.
+   - Native audio playback using gapless scheduling with configurable playback speed (`1x`, `1.25x`, `1.5x`).
+   - Audio controls: Microphone mute toggle, Speaker mute toggle, and End Call button.
+   - Spoken tool invocation: Hands-free steering, status query, and verbal hold approval (`"approve"`, `"deny"`).
+   - Automatic graceful fallback to Web Speech recognition and synthesis when live bidirectional audio streaming is unavailable.
+4. **Native Message Box:**
+   - **`+` Upload Button:** Mobile file and photo upload dispatching directly to active project workspace.
+   - **Model Selector Dropdown:** Select active model (`Auto`, `Gemini 4 Carbon`, `Gemini 4 Hydrogen`, `Gemini 4 Argon`, `Gemini 3.8 Flash`, `Pro`, `Flash`).
+   - **Permission Preset Picker:** Switch active conversation preset (`Request Review`, `Default`, `Auto`, `Turbo`).
+   - **Workspace Mode Toggle:** Choose between `Local` workspace or isolated `New Worktree`.
+   - **Auto-Growing Text Area:** Keyboard input supporting `/` Slash Commands (`/plan`, `/grill-me`, `/boost`, `/teamwork`, `/goal`, `/browser`, `/compact`, `/schedule`, `/learn`) and `@` Mentions (file autocomplete).
+   - **Dictation Mic:** Speech-to-text dictation directly into the composer.
+   - **Voice Mode Trigger:** Button to launch spoken bidirectional session.
+
+### Region 4: Slide-out Right Auxiliary Pane (`?view=auxpane`)
+Slides out from the right on mobile, or embeds as a standalone desktop companion sidebar (`320px–420px`). Organizes six dedicated tabs:
+1. **`Subagents` Tab:**
+   - Hierarchical swarm overview and agent roster.
+   - Displays agent role, active state (`waiting`, `working`, `stopped`), and parent-child task lineage.
+   - Nudge button to wake dormant agents or break coordination deadlocks.
+2. **`Files` Tab:**
+   - **Changes Sub-view:** Git status list showing modified and untracked files, expandable unified diff viewer, 1-tap `Git Commit & Push` with commit message input, and 1-tap `Revert` file action.
+   - **Browse Sub-view:** Read-only breadcrumb file tree explorer (`/api/agy/files/list`, `/api/agy/files/read`) with line numbers and 1-tap `@ Mention` button to inject file paths into the chat composer.
+3. **`Preview` Tab:**
+   - Authenticated reverse proxy (`/preview/{port}/`) streaming live local web applications (`localhost:PORT`) running on the host over Cloudflare Tunnel.
+   - Automatic port detection scanning active development listening ports (`3000`, `5173`, `8080`, `8000`, etc.) with one-tap preview launch.
+4. **`Artifacts` Tab:**
+   - Rich artifact viewer rendering generated artifacts (Markdown documents, interactive HTML widgets, SVG diagrams, and standalone code deliverables).
+5. **`Terminal` Tab:**
+   - Workspace directory selector, execution history with ANSI sanitization, quick shortcut chips (`git status`, `git log -5 --oneline`, `pytest`, `npm run build`), and remote command input bar (`POST /api/agy/terminal/exec`).
+6. **`Tasks` Tab:**
+   - Background task monitoring, progress tracking, task cancellation, and execution logs.
 
 ---
 
-## 5. Mandatory Interactive State Matrix
+## 5. Interface Layouts & Permission Models
 
-Every screen and reusable component MUST handle all baseline + `0G` runtime states clearly:
+### Interface Layouts (Settings > General)
+Users can toggle between two primary interface layouts depending on their focus:
+- **`Software Engineering` Layout:** Full technical surface exposing git diffs, commit/push actions, remote terminal execution, AST risk tiers, reverse proxy port preview, and granular swarm coordination.
+- **`Knowledge Work` Layout:** Streamlined productivity surface emphasizing conversation transcripts, document and artifact drafting, spoken voice interaction, and simplified task progress cards.
+
+### 4 Native Antigravity Permission Presets
+Permission presets control tool execution safety thresholds, configured globally or per project:
+1. **`Request Review`:** Strict verification. All tool invocations, file modifications, command executions, and network requests require explicit confirmation.
+2. **`Default`:** Balanced operation. Read-only actions and benign inspect commands run automatically; file modifications and elevated commands require approval.
+3. **`Auto`:** Autonomous workflow. Standard development tools and safe commands run automatically; only high-risk operations trigger confirmation.
+4. **`Turbo`:** Maximum speed. Auto-approves all Tier 0–2 actions while maintaining strict hard-block safety invariants on Tier 3 operations (sensitive files, credential stores, host destruction).
+
+### Decoupling: Permission Presets vs. Backpack Power Governor
+Permission presets govern agent execution autonomy. The **Backpack Power Governor** governs host hardware physics:
+- **`Ultra-Sip`:** Engages maximum battery conservation, throttles CPU power profiles, dims host display, and maintains tunnel persistence with minimal energy draw.
+- **`Auto-Turbo`:** Dynamically scales host CPU performance to maximum boost during agent execution, scaling down to conservation when idle.
+- **`Balanced`:** Standard OS balanced power delivery.
+- **`Max Turbo`:** Forces continuous peak CPU performance for intensive compilation or local model tasks.
+- **`Low-Batt Guard`:** Automatically enforces conservation thresholds when battery drops below safety limits.
+
+---
+
+## 6. Mandatory Interactive State Matrix
+
+Every screen and component MUST handle all baseline and runtime states cleanly:
 
 | State Key | Trigger Condition | Required Visual / Structural Behavior |
 | :--- | :--- | :--- |
 | `default` | Idle or steady connected state | Crisp `1px` `--border-default` hairline, live telemetry, `160ms` transform hover lift on desktop |
-| `hover` / `focus-visible` | Keyboard or pointer navigation | `2px solid var(--focus-ring)` with `2px` offset; zero suppressed focus rings |
-| `loading` | Initial fetch, conversation load, or command execution | Skeleton shimmer rows matching card geometry (zero layout shift / `CLS < 0.1`) |
-| `empty` | No active conversations, clean git working tree, or empty directory | Clear empty-state card with 1-sentence guidance and direct primary action CTA |
-| `error` | API failure, bridge offline, or terminal error | High-contrast `--status-danger` inline alert with retry button or diagnostic explanation |
-| `phone-hold` | Mode A `PreToolUse` awaiting phone tap (`Ask on Phone` mode) | Live `tabular-nums` countdown bar (`25s -> 0s`) in Global Inline Permission Banner, AST risk tier pill (`Tier 0–3`), command preview, **Approve**, **Allow 30m**, **Deny** |
-| `escalated` | Hold window expired -> `force_ask` returned | Banner transitions cleanly to warning-state `"Escalated to Antigravity Native UI"` badge so user knows laptop state was preserved |
-| `agent-turbo` | `agentGateMode == "agent_turbo"` | Header pill displays `"Agent Turbo (Auto)"`; Tier 0–2 workspace tools auto-allow while Tier-3 destructive operations stay blocked |
-| `offline-queued` | Phone offline / hotspot handoff | Outgoing prompt saved in IndexedDB outbox with `"Queued (Guarded by step # & HEAD sha)"` badge; auto-flushes on WebSocket reconnect |
-| `HOST_LOCKED` | PANIC button triggered | Persistent danger-state banner across header (`HOST LOCKED — Hooks Denying All Writes`), unlock requires explicit reset or passkey |
-| `ultra_sip` / `max_turbo` | Laptop Hardware Power gear (independent of Agent Gate!) | Distinct hardware power pill; selecting `Ultra-Sip` or `Max Turbo` locks manually (`Auto-Scale` off) and never flips when tasks start or finish |
+| `hover` / `focus-visible` | Keyboard or pointer navigation | `2px solid var(--border-strong)` with `2px` offset; zero suppressed focus rings |
+| `loading` | Initial fetch, conversation load, or command execution | Skeleton shimmer rows matching card geometry (zero layout shift, `CLS < 0.1`) |
+| `empty` | No active conversations, clean git working tree, or empty directory | Clear empty-state card with guidance copy and direct primary action CTA |
+| `error` | API failure, bridge offline, or command execution error | High-contrast `--status-danger` inline alert with retry button or diagnostic explanation |
+| `permission-hold` | Tool execution requiring approval | Inline confirmation card with tabular countdown timer (`25.0s -> 0.0s`), AST risk tier pill, command preview, `Approve`, `Allow 30m`, `Deny` |
+| `plan-review` | Multi-step agent plan awaiting review | Plan review card displaying steps, `Proceed` primary button, and feedback input |
+| `question-pending` | Agent requesting user decision | Multiple-choice card with selectable options and submit button |
+| `voice-active` | Spoken voice session connected | Floating Voice Call Bar with audio waveform pulse, mic/speaker toggles, speed selector |
+| `voice-speaking` | Agent voice output streaming | Audio playback active with interrupt detection and speech synthesis status |
+| `voice-interrupted` | User speaks while agent speaks | Scheduled audio buffers cleared instantly, returning to listening state |
+| `HOST_LOCKED` | PANIC button triggered | Persistent danger-state banner across top bar (`HOST LOCKED — Hooks Denying All Writes`), unlock requires explicit reset |
+| `offline-queued` | Phone offline / network handoff | Outgoing prompt saved in IndexedDB outbox with queued status badge; auto-flushes on reconnect |
+| `ultra_sip` / `max_turbo` | Hardware Power gear selected | Hardware power pill reflects active state; manual selection locks state until changed |
 
 ---
 
-## 6. Geometry, Motion & Custom Project Slot Guide
+## 7. Geometry, Motion & Custom Project Slot Guide
 
 - **Outer Container Radius:** `16px` (`--radius-outer`) | **Inner Control Radius:** `10px` (`--radius-inner`)
-- **Custom Project Icons & Styling Slots:** Each workspace card renders an optional `project.icon` (`terminal`, `cpu`, `folder`, or custom SVG/emoji slot) and `project.accentToken` so local workspaces and repositories can receive bespoke iconography, typography accents, and visual treatments in `theme.css` without altering any API contract.
-- **Motion Signature:** `140ms`–`240ms` `cubic-bezier(0.22, 1, 0.36, 1)` on `transform` and `opacity` only.
+- **Custom Project Icon Slots:** Each workspace card renders an optional `project.icon` (`terminal`, `cpu`, `folder`, or custom SVG slot) and `project.accentToken` for bespoke iconography and visual treatments without altering API contracts.
+- **Motion Signature:** `140ms`–`240ms` `cubic-bezier(0.22, 1, 0.36, 1)` applied strictly to `transform` and `opacity` properties.

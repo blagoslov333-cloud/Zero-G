@@ -97,7 +97,7 @@ export const MobilePromptModal: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => dismissNotifyCard(card.id)}
-                  className="btn-ghost !min-h-[36px] !min-w-[36px] !p-1"
+                  className="btn-ghost !min-h-[44px] !min-w-[44px] !p-1"
                   aria-label="Dismiss notification"
                 >
                   <X className="w-4 h-4" />
@@ -112,7 +112,7 @@ export const MobilePromptModal: React.FC = () => {
       {activeMobilePrompt && (
         <div
           className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-3"
-          style={{ backgroundColor: "rgba(0, 0, 0, 0.75)" }}
+          style={{ backgroundColor: "var(--overlay-scrim)" }}
           role="dialog"
           aria-modal="true"
           aria-labelledby="mobile-prompt-title"

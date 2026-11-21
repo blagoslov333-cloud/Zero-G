@@ -18,6 +18,25 @@ export type PowerGear =
   | "max_turbo"
   | "low_battery_guard";
 export type AgentGateMode = "ask_on_phone" | "agent_turbo";
+export type PermissionPreset = "request_review" | "default" | "auto" | "turbo";
+export type ProjectPermissionPreset = "inherit" | PermissionPreset;
+export type InterfaceLayout = "software_engineering" | "knowledge_work";
+export type WorktreeMode = "local" | "worktree";
+export type RightAuxTab =
+  | "subagents"
+  | "files"
+  | "preview"
+  | "artifacts"
+  | "terminal"
+  | "tasks";
+export type SettingsSection = "general" | "appearance" | "computer";
+export type VoicePlaybackSpeed = 1 | 1.25 | 1.5;
+export type VoiceModeKind =
+  | "connecting"
+  | "gemini_live"
+  | "fallback_web_speech"
+  | "error";
+
 export type RiskTier = 0 | 1 | 2 | 3;
 export type ApprovalStatus =
   | "pending"
@@ -30,7 +49,6 @@ export type ApprovalStatus =
 export type MobileToolRuntime = "phone_js" | "phone_builtin" | "host_command";
 export type TunnelBackend = "cloudflare" | "tailscale" | "local_only";
 export type ThemePreset = "obsidian" | "outdoor" | "wireframe";
-export type ActiveTab = "chat" | "projects" | "terminal" | "laptop";
 
 export interface ProjectSummary {
   id: string;
@@ -291,6 +309,16 @@ export interface GitStatusResponse {
   raw?: string;
 }
 
+export interface GitCommitPushResponse {
+  ok: boolean;
+  committed: boolean;
+  pushed: boolean;
+  commitSha?: string | null;
+  branch?: string | null;
+  pushOutput?: string;
+  error?: string | null;
+}
+
 export interface PtySessionInfo {
   id: string;
   shell?: string;
@@ -333,10 +361,22 @@ export interface AgyProject {
   id: string;
   name: string;
   path: string;
+  folders?: string[];
+  permissionPreset?: ProjectPermissionPreset;
+  defaultWorktreeMode?: WorktreeMode;
+  isCustom?: boolean;
   gitBranch?: string | null;
   dirtyCount: number;
   conversationCount: number;
   lastModifiedAt: number;
+}
+
+export interface AgyProjectConfigUpsertRequest {
+  id?: string | null;
+  name: string;
+  folders: string[];
+  permissionPreset?: ProjectPermissionPreset;
+  defaultWorktreeMode?: WorktreeMode;
 }
 
 export type AgyConversationStatus = "running" | "idle" | "killed";
@@ -353,6 +393,8 @@ export interface AgyConversationSummary {
   agentName?: string | null;
   subagentCount: number;
   hasSwarm: boolean;
+  latestMessage?: string | null;
+  lastStepType?: string | null;
 }
 
 export interface AgyToolCall {
@@ -360,6 +402,20 @@ export interface AgyToolCall {
   summary: string;
   argsPreview?: string | null;
   outputPreview?: string | null;
+}
+
+export interface AgyQuestionItem {
+  question: string;
+  options: string[];
+  is_multi_select?: boolean;
+  isMultiSelect?: boolean;
+}
+
+export interface AgyPlanReview {
+  title?: string | null;
+  summary?: string | null;
+  artifactPath?: string | null;
+  canProceed?: boolean;
 }
 
 export interface AgyMessage {
@@ -371,6 +427,8 @@ export interface AgyMessage {
   model?: string | null;
   toolCalls: AgyToolCall[];
   createdAt: number;
+  pendingQuestions?: AgyQuestionItem[] | null;
+  planReview?: AgyPlanReview | null;
 }
 
 export interface AgyArtifactSummary {
@@ -381,12 +439,31 @@ export interface AgyArtifactSummary {
   modifiedAt: number;
 }
 
+export interface AgySwarmBoardMessage {
+  seq?: number;
+  agent?: string;
+  sender?: string;
+  text?: string;
+  content?: string;
+  time?: string;
+  kind?: string;
+}
+
 export interface AgyConversationDetail {
   conversation: AgyConversationSummary;
   messages: AgyMessage[];
   artifacts: AgyArtifactSummary[];
   subagents: AgyConversationSummary[];
   swarmPlan?: Record<string, unknown> | null;
+  boardMessages?: AgySwarmBoardMessage[];
+}
+
+export interface AgySwarmDetailResponse {
+  ok?: boolean;
+  conversationId?: string;
+  swarmPlan?: Record<string, unknown> | null;
+  boardMessages?: AgySwarmBoardMessage[];
+  subagents?: AgyConversationSummary[];
 }
 
 export interface AgyCreateConversationRequest {
@@ -394,6 +471,10 @@ export interface AgyCreateConversationRequest {
   title?: string | null;
   model?: string | null;
   workspacePath?: string | null;
+  folders?: string[] | null;
+  worktreeMode?: WorktreeMode | null;
+  branchName?: string | null;
+  permissionPreset?: PermissionPreset | null;
 }
 
 export interface AgyCreateConversationResponse {
@@ -401,6 +482,8 @@ export interface AgyCreateConversationResponse {
   conversationId: string;
   title: string;
   deliveredVia: string;
+  worktreePath?: string | null;
+  branchName?: string | null;
 }
 
 export interface AgySendMessageResponse {
@@ -469,4 +552,57 @@ export interface AgyTerminalExecResponse {
   cwd: string;
   durationMs: number;
   timedOut: boolean;
+}
+
+export interface AgyUploadFileItem {
+  fileName: string;
+  relPath: string;
+  absPath?: string;
+  sizeBytes: number;
+  mentionToken: string;
+}
+
+export interface AgyUploadResponse extends AgyUploadFileItem {
+  ok: boolean;
+}
+
+export interface AgyDevPort {
+  port: number;
+  label?: string;
+  process?: string;
+  previewUrl?: string;
+}
+
+export interface AgyAutostartStatus {
+  ok?: boolean;
+  enabled: boolean;
+  notifyEmail: string;
+  autoEmailOnTunnelChange: boolean;
+  launcherPath?: string | null;
+  lastNotifiedPublicUrl?: string | null;
+  lastNotifiedAt?: number | null;
+  testEmailDispatched?: boolean;
+}
+
+export interface AgyVoiceCapabilities {
+  geminiLiveAvailable: boolean;
+  model: string;
+  sampleRateIn: number;
+  sampleRateOut: number;
+  fallback: string;
+}
+
+export interface AgySettingsResponse {
+  ok?: boolean;
+  permissionPreset: PermissionPreset;
+  interfaceLayout: InterfaceLayout;
+  agentGateMode?: AgentGateMode;
+  autostart?: AgyAutostartStatus;
+  voiceCapabilities?: AgyVoiceCapabilities;
+}
+
+export interface AgySettingsUpdateRequest {
+  permissionPreset?: PermissionPreset;
+  interfaceLayout?: InterfaceLayout;
+  agentGateMode?: AgentGateMode;
 }
